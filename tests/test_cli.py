@@ -22,12 +22,12 @@ def test_cli_help() -> None:
     assert "unpack" in result.output.lower()
 
 
-def test_pack_command() -> None:
-    """Test pack command stub."""
+def test_pack_command_requires_arguments() -> None:
+    """Test that pack command fails without required arguments."""
     runner = CliRunner()
     result = runner.invoke(main, ["pack"])
-    assert result.exit_code == 0
-    assert "not yet implemented" in result.output.lower()
+    # Must fail: input_file and -f are required
+    assert result.exit_code != 0
 
 
 def test_unpack_command() -> None:
