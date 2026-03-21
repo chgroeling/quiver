@@ -53,6 +53,14 @@ quiver/
 * **Build package:** `uv build` - Creates wheel and sdist in dist/
 * **Publish to PyPI:** `uv publish` - Upload to PyPI (requires credentials)
 
+### Advanced UV Usage
+* **Initialize Environment:** `uv init` - Sets up a new project environment.
+* **Check Dependencies:** `uv check` - Validates compatibility of dependencies.
+
+### Best Practices for UV
+* Use `uv lock` regularly to maintain dependency integrity.
+* Avoid editing `uv.lock` manually; prefer using commands for consistency.
+
 ## Testing & Quality Assurance
 
 ### Code Quality Checks

@@ -790,6 +790,11 @@ docs = [
     { name = "mkdocs-material" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pyfakefs" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiofile", specifier = ">=3.8.0" },
@@ -809,6 +814,9 @@ requires-dist = [
     { name = "types-click", marker = "extra == 'dev'", specifier = ">=7.1.0" },
 ]
 provides-extras = ["dev", "docs"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pyfakefs", specifier = ">=6.1.6" }]
 
 [[package]]
 name = "requests"

@@ -120,5 +120,10 @@ addopts = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[dependency-groups]
+dev = [
+    "pyfakefs>=6.1.6",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/quiver"]
