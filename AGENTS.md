@@ -1,7 +1,7 @@
 # AGENTS.md
 
-## Project Context
-You are developing `quiver`, a high-performance, cross-platform Python package and command-line tool. Its core purpose is packing and unpacking text files into a strictly formatted, machine-readable XML format.
+## Project description
+`quiver` is a high-performance Python utility that bi-directionally serializes text file directories into a strictly structured, machine-readable XML format.
 
 ## Project Structure
 
@@ -34,99 +34,67 @@ quiver/
     └── index.md                 # Documentation home page
 ```
 
-## Development Workflows
+# Development Workflows
 
-### Installation & Environment Setup
-* **Sync dependencies:** `uv sync` - Install all dependencies from uv.lock
-* **Sync with extras:** `uv sync --all-extras` - Install including dev and docs dependencies
-* **Update dependencies:** `uv lock --upgrade` - Update uv.lock with latest compatible versions
+### UV Environment & Dependencies
+- **Sync:** `uv sync` (add `--all-extras` for dev/docs).
+- **Update:** `uv lock --upgrade`.
+- **Management:** `uv add <pkg>` (use `--dev` for dev); `uv remove <pkg>`; `uv pip list`.
+- **Strategy:** Use min constraints (e.g., `click>=8.1.0`) in `pyproject.toml`; rely on `uv.lock` for reproducibility. Avoid manual lock edits.
 
-### Dependency Management
-* **Version Strategy:** Use minimum version constraints (e.g., `click>=8.1.0`) in `pyproject.toml` instead of pinning exact versions. This prevents downstream conflicts for users, while our `uv.lock` file still guarantees reproducible builds during development.
-* **Add runtime dependency:** `uv add <package>`
-* **Add dev dependency:** `uv add --dev <package>`
-* **Remove dependency:** `uv remove <package>`
-* **Show installed packages:** `uv pip list`
+### Execution & Lifecycle
+- **Run:** `uv run [quiver|python script.py|tool] [args]`.
+- **Project:** `uv init` (setup); `uv check` (compat-check).
+- **Dist:** `uv build` (wheel/sdist); `uv publish` (upload).
 
-### Running Commands
-* **Run CLI:** `uv run quiver [command]` - Execute the quiver CLI
-* **Run Python scripts:** `uv run python script.py` - Run Python with project dependencies
-* **Run any tool:** `uv run [tool] [args]` - Execute any installed tool (pytest, mypy, ruff, etc.)
+### Standards & Git
+- **Versioning:** Strict SemVer (`MAJOR.MINOR.PATCH`).
+- **Commits:** Follow Conventional Commits (e.g., `feat:`, `fix:`, `chore:`).
+- **Automation:** **Never** commit autonomously; only execute on explicit user request.
 
-### Building & Publishing
-* **Build package:** `uv build` - Creates wheel and sdist in dist/
-* **Publish to PyPI:** `uv publish` - Upload to PyPI (requires credentials)
+## Testing & QA
 
-### Advanced UV Usage
-* **Initialize Environment:** `uv init` - Sets up a new project environment.
-* **Check Dependencies:** `uv check` - Validates compatibility of dependencies.
+### Quality Checks
+Uses `ruff` (lint/format) and `mypy` (types) for speed and centralization.
+- **Lint:** `uv run ruff check src/ tests/`
+- **Format:** `uv run ruff format src/ tests/`
+- **Format Check:** `uv run ruff format --check src/ tests/`
+- **Type Check:** `uv run mypy src/`
+
+### Pre-Commit Gate
+Run sequence: `uv run ruff format src/ tests/ && uv run ruff check src/ tests/ && uv run mypy src/ && uv run pytest`
+
+### Execution
+- **All:** `uv run pytest` (-v for verbose)
+- **Targeted:** `uv run pytest tests/[file].py` or `tests/[file].py::[function]`
+- **Coverage:** `uv run pytest --cov=quiver --cov-report=html`
+
+### Structure
+- **Location:** `tests/` directory.
+- **Mapping:** 1:1 module-to-test file ratio (e.g., `cli.py` -> `test_cli.py`).
+- **Practices:** Use `tmp_path` for FS tests; prioritize critical path coverage.
 
 
-### Versioning Rules
-Strict rules apply to version control in this project:
-* **Semantic Versioning (SemVer):** All versioning must strictly follow the SemVer standard (`MAJOR.MINOR.PATCH`).
-
-### Git Rules
-* **Conventional Commits:** All commit messages must adhere to the Conventional Commits standard (e.g., `feat: ...`, `fix: ...`, `chore: ...`, `refactor: ...`).
-* **Commits Only on Request:** **Never** commit code autonomously. Commits must only be executed when the user explicitly requests them.
-
-### Best Practices for UV
-* Use `uv lock` regularly to maintain dependency integrity.
-* Avoid editing `uv.lock` manually; prefer using commands for consistency.
-
-## Testing & Quality Assurance
-
-### Code Quality Checks
-We exclusively use `ruff` for both linting and formatting because it replaces multiple legacy tools (black, flake8, isort), centralizes configuration, and is significantly faster.
-* **Lint code:** `uv run ruff check src/ tests/`
-* **Format code:** `uv run ruff format src/ tests/`
-* **Check formatting:** `uv run ruff format --check src/ tests/`
-* **Type check:** `uv run mypy src/`
-
-### Pre-Commit Quality Gate
-Before committing, run this sequence to ensure all checks pass:
-```bash
-uv run ruff format src/ tests/     # Format code
-uv run ruff check src/ tests/      # Lint code
-uv run mypy src/                   # Type check
-uv run pytest                      # Run tests
-```
-
-### Running Tests
-* **Run all tests:** `uv run pytest`
-* **Run with verbose output:** `uv run pytest -v`
-* **Run specific test file:** `uv run pytest tests/test_cli.py`
-* **Run specific test function:** `uv run pytest tests/test_cli.py::test_cli_version`
-* **Run with coverage:** `uv run pytest --cov=quiver --cov-report=html`
-
-### Test Structure
-* Tests are located in `tests/` directory
-* Use `pyfakefs` fixture (`fake_fs`) for filesystem mocking
-* Each module should have corresponding test file (e.g., `cli.py` → `test_cli.py`)
-* Aim for high test coverage, especially for critical paths
-
-## Technology Stack
-Exclusively use the following technologies and libraries for implementation:
-* **Language:** Python 3.12.3
-* **Environment & Packaging:** `uv`, `pyproject.toml`
-* **Build System:** `hatchling`
-* **CLI & UI:** `click` (Framework), `rich` (User feedback, verbose mode)
-* **Logging:** `structlog` (Internal, structured debug logging)
-* **XML & I/O:** `lxml` (Processing), `aiofile` (Asynchronous I/O)
-* **Quality Assurance:** `ruff` (Linter/Formatter), `mypy` (Strict mode typechecking)
-* **Testing:** `pytest`, `pyfakefs` (Mocking), `pytest-benchmark`
-* **Documentation:** `mkdocs` with the Material theme. This provides a fast, Markdown-based, and visually appealing site that is easily hosted on GitHub Pages.
+## Tech Stack & Standards
+- **Runtime:** Python 3.12.3
+- **Concurrency:** `asyncio` (core)
+- **Package Mgmt:** `uv` via `pyproject.toml` (Build: `hatchling`)
+- **CLI/UI:** `click` (commands); `rich` (UI/verbose)
+- **Logging:** `structlog` (debug/structured)
+- **Parsing/IO:** `lxml` (XML); `aiofile` (async I/O)
+- **Quality:** `ruff` (lint/fmt); `mypy` (strict)
+- **Testing:** `pytest` (plugins: `benchmark`, `asyncio`)
+- **Docs:** `mkdocs` with Material theme
 
 ## Coding Standards
-* **Strict Typing:** The codebase must be statically typed. Apply strict `mypy` rules to the `src/` directory to ensure production reliability, but relax these rules for the `tests/` directory to allow flexibility for mocking and fixtures without unnecessary boilerplate.
-* **Formatting:** The code must strictly follow PEP8 guidelines, enforced by `ruff`.
-* **Testing:** For every written function, at least one unit test (preferably more for edge cases) must exist. Use `pyfakefs` to mock file system operations in tests.
-* **Separation of UI and Logging:**
-    * The CLI is "silent by default".
-    * Internal logging is handled **only** via `structlog` and is disabled by default. It is only activated if an explicit debug flag is passed in the CLI.
-    * User feedback (progress, generic outputs) is handled **only** via `rich` and is only activated if a verbose flag is passed. Never mix UI outputs with the internal logger.
+- **Typing:** Strict `mypy` for `src/` (reliability); relaxed for `tests/` (mocking flexibility).
+- **Format:** PEP8 enforced via `ruff`; max line length 100 chars.
+- **Testing:** Min. 1 unit test per function; use `tmp_path` for FS tests.
+- **UI vs. Logging:** CLI silent by default.
+    - **structlog:** Internal logs only; enabled via debug flag.
+    - **rich:** User feedback/progress only; enabled via verbose flag.
+    - **Strict Isolation:** Never mix UI output with internal loggers.
 
-* **Line length** <= 100 chars (enforced by ruff)
 ## Python API
 
 The public API follows the `tarfile` pattern. Entry point: `quiver.open()` in `__init__.py`.
@@ -135,7 +103,8 @@ The public API follows the `tarfile` pattern. Entry point: `quiver.open()` in `_
 - Factory: `QuiverFile.open(name, mode)` or `quiver.open(name, mode)`
 - Modes: `'r'` (read), `'w'` (write), `'a'` (append)
 - Context manager: calls `close()` on `__exit__`
-- `add(name, arcname=None)` — validates UTF-8, normalizes path, stores entry
+- `add(name, arcname=None)` — accepts file or directory input; validates UTF-8, normalizes POSIX paths, stores entries
+- Directory packing uses an internal async reader/writer flow with bounded queue backpressure and a single writer task
 - `close()` — sorts entries alphabetically, builds lxml XML tree, writes to disk
 - `getnames()` / `getmembers()` — return names / `QuiverInfo` objects (write mode only for now)
 - `extractall()` — scaffolded; raises `NotImplementedError`
@@ -153,11 +122,11 @@ The public API follows the `tarfile` pattern. Entry point: `quiver.open()` in `_
 - Exports: `open`, `QuiverFile`, `QuiverInfo`, `BinaryFileError`, `__version__`
 
 ## CLI
-
 Command: `quiver [--verbose/-v] [--debug] pack <input_file> -f <output.xml>`
 
 - `--verbose` / `-v`: enables `rich` UI output (progress messages)
 - `--debug`: enables `structlog` structured logging to stderr
+- `pack` auto-detects whether `<input_file>` is a file or directory
 - Silent by default — zero output on success without flags
 - `--verbose` / `--debug` are group-level flags; pass them **before** the subcommand name
 - `unpack` subcommand is a stub (`NotImplementedError` equivalent)
@@ -190,14 +159,24 @@ Command: `quiver [--verbose/-v] [--debug] pack <input_file> -f <output.xml>`
 | `QuiverFile.close` | `archive_name=` |
 
 ## Architecture & Internal Mechanisms
-* **CLI Structure:** Use Click's group/command pattern to naturally separate `pack` and `unpack` into subcommands. This aligns with modern CLI UX, keeps help text organized, and makes adding future commands straightforward.
-* **Concurrency & Memory Management (OOM Protection):**
+- **CLI Structure:** Use Click's group/command pattern to naturally separate `pack` and `unpack` into subcommands. This aligns with modern CLI UX, keeps help text organized, and makes adding future commands straightforward.
+- **Concurrency & Memory Management (OOM Protection):**
     * I/O operations are handled asynchronously (`asyncio`) or via threading.
     * Implement a strict Reader/Writer pattern using a size-limited queue to prevent Out-of-Memory (OOM) crashes (backpressure).
     * Large files must be streamed in chunks.
-* **Single Writer Principle:** To prevent deadlocks and ensure Git-friendly, deterministic results, only one dedicated task is permitted to write the prepared XML data.
-* **Sorting & Paths:** File entries must be written to the XML in strict alphabetical order. All internal paths must be normalized to POSIX paths (forward slashes `/`).
-* **Security & Validation:**
+- **Single Writer Principle:** To prevent deadlocks and ensure Git-friendly, deterministic results, only one dedicated task is permitted to write the prepared XML data.
+- **Sorting & Paths:** File entries must be written to the XML in strict alphabetical order. All internal paths must be normalized to POSIX paths (forward slashes `/`).
+- **Security & Validation:**
     * Only UTF-8 readable text files may be processed.
     * Unpacking requires strict sandboxing. Absolute paths or path-traversal attempts (`../`) must be blocked immediately and cause an abort.
-* **XML Constraints:** The content of text files must be placed within unescaped `<![CDATA[ ... ]]>` blocks in the XML. Do not use entity encoding (`&lt;`) for the file body.
+- **XML Constraints:** The content of text files must be placed within unescaped `<![CDATA[ ... ]]>` blocks in the XML. Do not use entity encoding (`&lt;`) for the file body.
+
+
+## Docstring Rules
+- **Format:** Google Style (`Args:`, `Returns:`, `Raises:`).
+- **Markup:** Markdown ONLY. NO reST/Sphinx directives (`:class:`, `:func:`, `:exc:`, `::`).
+- **Code:** Single backticks for inline (`` `x` ``). Triple backticks for blocks (````python````).
+- **Links:** Use MkDocs autorefs: `[MyClass][]` or `[func][module.func]`.
+- **Types:** Rely on Python type hints in the signature. Do not duplicate types in docstrings.
+- **Style:** PEP 257 imperative mood ("Return X", not "Returns X").
+- **Length:** Use pure one-liners (`"""Do X."""`) for simple, private, or trivial functions. Use multi-line (summary, blank line, sections) ONLY for complex or public APIs. Do not force `Args:`/`Returns:` if the function is self-explanatory.
