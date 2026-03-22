@@ -28,7 +28,7 @@ def main(ctx: click.Context, verbose: bool, debug: bool) -> None:
 
 
 @main.command()
-@click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("input_file", type=click.Path(exists=True, dir_okay=True))
 @click.option(
     "-f",
     "--file",
@@ -39,7 +39,7 @@ def main(ctx: click.Context, verbose: bool, debug: bool) -> None:
 )
 @click.pass_context
 def pack(ctx: click.Context, input_file: str, output_file: str) -> None:
-    """Pack INPUT_FILE into an XML archive."""
+    """Pack INPUT_FILE (file or directory) into an XML archive."""
     verbose: bool = ctx.obj.get("verbose", False)
     console = get_console(verbose)
 

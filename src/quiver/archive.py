@@ -6,10 +6,12 @@ into the quiver XML archive format.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import structlog
+from aiofile import async_open
 from lxml import etree
 
 if TYPE_CHECKING:
@@ -19,6 +21,8 @@ logger = structlog.get_logger(__name__)
 
 VALID_MODES = frozenset({"r", "w", "a"})
 ARCHIVE_VERSION = "1.0"
+MAX_DIRECTORY_READERS = 8
+QUEUE_MAXSIZE = 64
 
 
 class BinaryFileError(ValueError):
@@ -130,7 +134,6 @@ class QuiverFile:
         Raises:
             FileNotFoundError: If *name* does not exist.
             BinaryFileError: If *name* cannot be decoded as UTF-8 text.
-            IsADirectoryError: If *name* is a directory (not yet supported).
             ValueError: If the archive is not open for writing/appending.
         """
         if self._mode not in {"w", "a"}:
@@ -143,16 +146,100 @@ class QuiverFile:
         if not file_path.exists():
             raise FileNotFoundError(f"No such file: {name!r}")
         if file_path.is_dir():
-            raise IsADirectoryError(
-                f"{name!r} is a directory. Directory packing is not yet supported."
-            )
+            self._add_directory(file_path, arcname)
+            return
 
         content = _read_text_file(file_path)
 
-        stored_path = arcname if arcname is not None else _normalize_path(file_path)
+        stored_path = (
+            _normalize_stored_path(arcname) if arcname is not None else _normalize_path(file_path)
+        )
         info = QuiverInfo(name=stored_path, size=len(content.encode("utf-8")))
         self._entries.append((info, content))
         logger.debug("Added file", entry_path=stored_path, size=info.size)
+
+    def _add_directory(self, directory_path: Path, arcname: str | None = None) -> None:
+        """Recursively add all UTF-8 files under *directory_path* using async workers."""
+        asyncio.run(self._add_directory_async(directory_path, arcname))
+
+    async def _add_directory_async(self, directory_path: Path, arcname: str | None = None) -> None:
+        """Coordinate bounded-queue async readers and a single writer task."""
+        files = _collect_directory_files(directory_path)
+        if not files:
+            return
+
+        worker_count = min(MAX_DIRECTORY_READERS, len(files))
+        file_queue: asyncio.Queue[Path | None] = asyncio.Queue()
+        data_queue: asyncio.Queue[tuple[QuiverInfo, str] | None] = asyncio.Queue(
+            maxsize=QUEUE_MAXSIZE
+        )
+
+        for file_path in files:
+            file_queue.put_nowait(file_path)
+        for _ in range(worker_count):
+            file_queue.put_nowait(None)
+
+        writer_task = asyncio.create_task(self._directory_writer(data_queue))
+        reader_tasks = [
+            asyncio.create_task(
+                self._directory_reader_worker(
+                    root_dir=directory_path,
+                    arcname=arcname,
+                    file_queue=file_queue,
+                    data_queue=data_queue,
+                )
+            )
+            for _ in range(worker_count)
+        ]
+
+        try:
+            await asyncio.gather(*reader_tasks)
+        except Exception:
+            for task in reader_tasks:
+                task.cancel()
+            await asyncio.gather(*reader_tasks, return_exceptions=True)
+
+            writer_task.cancel()
+            await asyncio.gather(writer_task, return_exceptions=True)
+            raise
+
+        await data_queue.put(None)
+        await writer_task
+
+    async def _directory_reader_worker(
+        self,
+        root_dir: Path,
+        arcname: str | None,
+        file_queue: asyncio.Queue[Path | None],
+        data_queue: asyncio.Queue[tuple[QuiverInfo, str] | None],
+    ) -> None:
+        """Read queued files and send normalized entries to the writer queue."""
+        while True:
+            file_path = await file_queue.get()
+            if file_path is None:
+                file_queue.task_done()
+                return
+
+            try:
+                content = await _read_text_file_async(file_path)
+                relative = file_path.relative_to(root_dir)
+                stored_path = _directory_stored_path(relative=relative, arcname=arcname)
+                info = QuiverInfo(name=stored_path, size=len(content.encode("utf-8")))
+                await data_queue.put((info, content))
+                logger.debug("Added file", entry_path=stored_path, size=info.size)
+            finally:
+                file_queue.task_done()
+
+    async def _directory_writer(
+        self,
+        data_queue: asyncio.Queue[tuple[QuiverInfo, str] | None],
+    ) -> None:
+        """Consume entries from the queue and append them for final archive writing."""
+        while True:
+            item = await data_queue.get()
+            if item is None:
+                return
+            self._entries.append(item)
 
     # ------------------------------------------------------------------
     # Read API (scaffolded — read mode not yet implemented)
@@ -240,6 +327,38 @@ def _read_text_file(path: Path) -> str:
         ) from exc
 
 
+async def _read_text_file_async(path: Path) -> str:
+    """Asynchronously read *path* as UTF-8 text."""
+    async with async_open(path, "rb") as afp:
+        raw = cast("bytes", await afp.read())
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BinaryFileError(
+            f"File {str(path)!r} is not valid UTF-8 text and cannot be packed."
+        ) from exc
+
+
+def _collect_directory_files(directory_path: Path) -> list[Path]:
+    """Collect all regular files under *directory_path* recursively."""
+    return sorted(path for path in directory_path.rglob("*") if path.is_file())
+
+
+def _directory_stored_path(relative: Path, arcname: str | None) -> str:
+    """Build the stored archive path for a file relative to a packed directory."""
+    relative_path = _normalize_path(relative)
+    if arcname is None:
+        return relative_path
+    return _normalize_stored_path(str(PurePosixPath(arcname) / relative_path))
+
+
+def _normalize_stored_path(path_value: str) -> str:
+    """Normalize a stored archive path value to clean relative POSIX format."""
+    posix = PurePosixPath(path_value)
+    parts = [part for part in posix.parts if part not in ("/", "..")]
+    return str(PurePosixPath(*parts)) if parts else posix.name
+
+
 def _normalize_path(path: Path) -> str:
     """Normalize *path* to a clean POSIX string suitable for archive storage.
 
@@ -254,10 +373,7 @@ def _normalize_path(path: Path) -> str:
         A clean, relative POSIX path string.
     """
     # Resolve to a PurePosixPath representation
-    posix = PurePosixPath(path.as_posix())
-    # Strip leading slash to ensure the stored path is always relative
-    parts = [p for p in posix.parts if p not in ("/", "..")]
-    return str(PurePosixPath(*parts)) if parts else posix.name
+    return _normalize_stored_path(path.as_posix())
 
 
 def _build_xml_tree(entries: list[tuple[QuiverInfo, str]]) -> etree._Element:

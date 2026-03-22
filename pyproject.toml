@@ -47,7 +47,6 @@ dev = [
     "ruff>=0.6.0",
     "mypy>=1.11.0",
     "pytest>=8.0.0",
-    "pyfakefs>=5.0.0",
     "pytest-benchmark>=4.0.0",
     "pytest-asyncio>=0.23.0",
     "lxml-stubs>=0.5.0",
@@ -119,11 +118,6 @@ addopts = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[dependency-groups]
-dev = [
-    "pyfakefs>=6.1.6",
-]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/quiver"]

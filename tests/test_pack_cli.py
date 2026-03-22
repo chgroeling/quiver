@@ -11,7 +11,7 @@ from lxml import etree
 from quiver.cli import main
 
 if TYPE_CHECKING:
-    from pyfakefs.fake_filesystem import FakeFilesystem
+    from pathlib import Path
 
 
 @pytest.fixture
@@ -24,32 +24,54 @@ def runner() -> CliRunner:
 # ---------------------------------------------------------------------------
 
 
-def test_pack_produces_valid_xml(fake_fs: FakeFilesystem, runner: CliRunner) -> None:
-    fake_fs.create_file("hello.txt", contents="Hello, world!")
-    result = runner.invoke(main, ["pack", "hello.txt", "-f", "archive.xml"])
+def test_pack_produces_valid_xml(tmp_path: Path, runner: CliRunner) -> None:
+    input_file = tmp_path / "hello.txt"
+    input_file.write_text("Hello, world!", encoding="utf-8")
+    output_file = tmp_path / "archive.xml"
+
+    result = runner.invoke(main, ["pack", str(input_file), "-f", str(output_file)])
     assert result.exit_code == 0, result.output
 
-    raw_xml = fake_fs.get_object("archive.xml").contents  # type: ignore[union-attr]
+    raw_xml = output_file.read_text(encoding="utf-8")
     root = etree.fromstring(raw_xml.encode())
     assert root.tag == "archive"
     assert root.get("version") == "1.0"
     file_elem = root.find("file")
     assert file_elem is not None
-    assert file_elem.get("path") == "hello.txt"
+    assert file_elem.get("path", "").endswith("hello.txt")
     content_elem = file_elem.find("content")
     assert content_elem is not None
     assert content_elem.text == "Hello, world!"
 
 
-def test_pack_xml_uses_cdata(fake_fs: FakeFilesystem, runner: CliRunner) -> None:
-    fake_fs.create_file("special.txt", contents="x < y && z > w")
-    result = runner.invoke(main, ["pack", "special.txt", "-f", "archive.xml"])
+def test_pack_xml_uses_cdata(tmp_path: Path, runner: CliRunner) -> None:
+    input_file = tmp_path / "special.txt"
+    input_file.write_text("x < y && z > w", encoding="utf-8")
+    output_file = tmp_path / "archive.xml"
+
+    result = runner.invoke(main, ["pack", str(input_file), "-f", str(output_file)])
     assert result.exit_code == 0
 
-    raw_xml = fake_fs.get_object("archive.xml").contents  # type: ignore[union-attr]
+    raw_xml = output_file.read_text(encoding="utf-8")
     assert "<![CDATA[" in raw_xml
     assert "&lt;" not in raw_xml
     assert "&amp;" not in raw_xml
+
+
+def test_pack_directory_recursively(tmp_path: Path, runner: CliRunner) -> None:
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    (project / "README.md").write_text("# demo", encoding="utf-8")
+    (src / "main.py").write_text("print('ok')", encoding="utf-8")
+
+    output = tmp_path / "archive.xml"
+    result = runner.invoke(main, ["pack", str(project), "-f", str(output)])
+    assert result.exit_code == 0, result.output
+
+    root = etree.fromstring(output.read_text(encoding="utf-8").encode())
+    paths = [el.get("path") for el in root.findall("file")]
+    assert paths == ["README.md", "src/main.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -57,19 +79,23 @@ def test_pack_xml_uses_cdata(fake_fs: FakeFilesystem, runner: CliRunner) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_pack_silent_by_default(fake_fs: FakeFilesystem, runner: CliRunner) -> None:
-    fake_fs.create_file("input.txt", contents="data")
-    result = runner.invoke(main, ["pack", "input.txt", "-f", "out.xml"])
+def test_pack_silent_by_default(tmp_path: Path, runner: CliRunner) -> None:
+    input_file = tmp_path / "input.txt"
+    output_file = tmp_path / "out.xml"
+    input_file.write_text("data", encoding="utf-8")
+
+    result = runner.invoke(main, ["pack", str(input_file), "-f", str(output_file)])
     assert result.exit_code == 0
-    # No stdout; stderr is managed by rich (not captured by CliRunner by default)
     assert result.output == ""
 
 
-def test_pack_verbose_produces_output(fake_fs: FakeFilesystem, runner: CliRunner) -> None:
-    fake_fs.create_file("input.txt", contents="data")
-    result = runner.invoke(main, ["--verbose", "pack", "input.txt", "-f", "out.xml"])
+def test_pack_verbose_produces_output(tmp_path: Path, runner: CliRunner) -> None:
+    input_file = tmp_path / "input.txt"
+    output_file = tmp_path / "out.xml"
+    input_file.write_text("data", encoding="utf-8")
+
+    result = runner.invoke(main, ["--verbose", "pack", str(input_file), "-f", str(output_file)])
     assert result.exit_code == 0
-    # Some output must be present when --verbose is used
     assert len(result.output) > 0
 
 
@@ -78,22 +104,39 @@ def test_pack_verbose_produces_output(fake_fs: FakeFilesystem, runner: CliRunner
 # ---------------------------------------------------------------------------
 
 
-def test_pack_missing_input_file_error(runner: CliRunner) -> None:
+def test_pack_missing_input_file_error(tmp_path: Path, runner: CliRunner) -> None:
     """click should reject a non-existent input file before calling pack()."""
-    result = runner.invoke(main, ["pack", "no_such_file.txt", "-f", "out.xml"])
+    output_file = tmp_path / "out.xml"
+    result = runner.invoke(
+        main, ["pack", str(tmp_path / "no_such_file.txt"), "-f", str(output_file)]
+    )
     assert result.exit_code != 0
 
 
-def test_pack_binary_file_error(fake_fs: FakeFilesystem, runner: CliRunner) -> None:
-    fake_fs.create_file("binary.bin", contents=b"\xff\xfe\x00\x01", apply_umask=True)
-    result = runner.invoke(main, ["pack", "binary.bin", "-f", "out.xml"])
+def test_pack_binary_file_error(tmp_path: Path, runner: CliRunner) -> None:
+    input_file = tmp_path / "binary.bin"
+    output_file = tmp_path / "out.xml"
+    input_file.write_bytes(b"\xff\xfe\x00\x01")
+
+    result = runner.invoke(main, ["pack", str(input_file), "-f", str(output_file)])
     assert result.exit_code != 0
 
 
-def test_pack_requires_output_flag(fake_fs: FakeFilesystem, runner: CliRunner) -> None:
-    fake_fs.create_file("input.txt", contents="data")
-    result = runner.invoke(main, ["pack", "input.txt"])
-    # Missing required -f option should produce a usage error
+def test_pack_directory_with_binary_file_errors(tmp_path: Path, runner: CliRunner) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "text.txt").write_text("ok", encoding="utf-8")
+    (project / "binary.bin").write_bytes(b"\xff\xfe\x00")
+
+    output = tmp_path / "out.xml"
+    result = runner.invoke(main, ["pack", str(project), "-f", str(output)])
+    assert result.exit_code != 0
+
+
+def test_pack_requires_output_flag(tmp_path: Path, runner: CliRunner) -> None:
+    input_file = tmp_path / "input.txt"
+    input_file.write_text("data", encoding="utf-8")
+    result = runner.invoke(main, ["pack", str(input_file)])
     assert result.exit_code != 0
 
 
@@ -102,11 +145,14 @@ def test_pack_requires_output_flag(fake_fs: FakeFilesystem, runner: CliRunner) -
 # ---------------------------------------------------------------------------
 
 
-def test_pack_long_form_file_option(fake_fs: FakeFilesystem, runner: CliRunner) -> None:
-    fake_fs.create_file("input.txt", contents="content")
-    result = runner.invoke(main, ["pack", "input.txt", "--file", "archive.xml"])
+def test_pack_long_form_file_option(tmp_path: Path, runner: CliRunner) -> None:
+    input_file = tmp_path / "input.txt"
+    output_file = tmp_path / "archive.xml"
+    input_file.write_text("content", encoding="utf-8")
+
+    result = runner.invoke(main, ["pack", str(input_file), "--file", str(output_file)])
     assert result.exit_code == 0
-    assert fake_fs.get_object("archive.xml") is not None
+    assert output_file.exists()
 
 
 def test_pack_help_shows_options(runner: CliRunner) -> None:
@@ -120,24 +166,30 @@ def test_pack_help_shows_options(runner: CliRunner) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pack_debug_flag_does_not_crash(fake_fs: FakeFilesystem, runner: CliRunner) -> None:
+def test_pack_debug_flag_does_not_crash(tmp_path: Path, runner: CliRunner) -> None:
     """Regression: structlog debug calls must not crash and must emit bound fields."""
-    fake_fs.create_file("input.txt", contents="data")
-    result = runner.invoke(main, ["--debug", "pack", "input.txt", "-f", "out.xml"])
+    input_file = tmp_path / "input.txt"
+    output_file = tmp_path / "out.xml"
+    input_file.write_text("data", encoding="utf-8")
+
+    result = runner.invoke(main, ["--debug", "pack", str(input_file), "-f", str(output_file)])
     assert result.exit_code == 0, result.output
-    assert fake_fs.get_object("out.xml") is not None
-    # Structlog ConsoleRenderer emits key=value pairs; verify bound fields appear.
+    assert output_file.exists()
     assert "archive_name" in result.output
     assert "entry_path" in result.output
 
 
-def test_pack_verbose_and_debug_flags(fake_fs: FakeFilesystem, runner: CliRunner) -> None:
+def test_pack_verbose_and_debug_flags(tmp_path: Path, runner: CliRunner) -> None:
     """Regression: combining --verbose and --debug must succeed and show all output."""
-    fake_fs.create_file("input.txt", contents="data")
-    result = runner.invoke(main, ["--verbose", "--debug", "pack", "input.txt", "-f", "out.xml"])
+    input_file = tmp_path / "input.txt"
+    output_file = tmp_path / "out.xml"
+    input_file.write_text("data", encoding="utf-8")
+
+    result = runner.invoke(
+        main,
+        ["--verbose", "--debug", "pack", str(input_file), "-f", str(output_file)],
+    )
     assert result.exit_code == 0, result.output
-    # Rich verbose output present
     assert len(result.output) > 0
-    # Structlog bound fields present
     assert "archive_name" in result.output
     assert "entry_path" in result.output

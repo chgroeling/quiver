@@ -620,15 +620,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pyfakefs"
-version = "6.1.6"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/29/50/6aaa18de5e3c1b3ec73e4e9ed7ffa6972780972821ec65ace09e326c92b5/pyfakefs-6.1.6.tar.gz", hash = "sha256:dcdfc09b13f3fd464142e20ef6154639bd26fb0890572c5dd869339a083e2903", size = 227057, upload-time = "2026-03-18T19:59:01.998Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/c0/c2eb12179e9e75d220c4d7c37acafdf86fca82e377609136a8dcbdc061c4/pyfakefs-6.1.6-py3-none-any.whl", hash = "sha256:28e620e117b9728d7f8ebb50f9537da6ab36ef9c0bebc12469aaba3c72759ff7", size = 240121, upload-time = "2026-03-18T19:59:00.648Z" },
-]
-
-[[package]]
 name = "pygments"
 version = "2.19.2"
 source = { registry = "https://pypi.org/simple" }
@@ -778,7 +769,6 @@ dependencies = [
 dev = [
     { name = "lxml-stubs" },
     { name = "mypy" },
-    { name = "pyfakefs" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-benchmark" },
@@ -790,11 +780,6 @@ docs = [
     { name = "mkdocs-material" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "pyfakefs" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "aiofile", specifier = ">=3.8.0" },
@@ -804,7 +789,6 @@ requires-dist = [
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.0" },
-    { name = "pyfakefs", marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "pytest-benchmark", marker = "extra == 'dev'", specifier = ">=4.0.0" },
@@ -814,9 +798,6 @@ requires-dist = [
     { name = "types-click", marker = "extra == 'dev'", specifier = ">=7.1.0" },
 ]
 provides-extras = ["dev", "docs"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pyfakefs", specifier = ">=6.1.6" }]
 
 [[package]]
 name = "requests"
