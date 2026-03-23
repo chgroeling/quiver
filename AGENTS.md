@@ -28,7 +28,8 @@ quiver/
 │   ├── conftest.py              # Pytest fixtures and configuration
 │   ├── test_cli.py              # CLI smoke tests
 │   ├── test_archive.py          # QuiverFile / QuiverInfo unit tests
-│   └── test_create_cli.py       # create operation integration tests
+│   ├── test_create_cli.py       # create operation integration tests
+│   └── test_utils.py            # utils/__init__.py unit tests
 │
 └── docs/                        # MkDocs documentation
     └── index.md                 # Documentation home page
@@ -74,6 +75,7 @@ Run sequence: `uv run ruff format src/ tests/ && uv run ruff check src/ tests/ &
 - **Mapping:** 1:1 module-to-test file ratio.
     - `cli.py` -> `test_cli.py` (smoke) and `test_create_cli.py` (integration).
     - `archive.py` -> `test_archive.py`.
+    - `utils/__init__.py` -> `test_utils.py`.
 - **Practices:** Use `tmp_path` for FS tests; prioritize critical path coverage.
 
 
@@ -90,6 +92,7 @@ Run sequence: `uv run ruff format src/ tests/ && uv run ruff check src/ tests/ &
 
 ## Coding Standards
 - **Typing:** Strict `mypy` for `src/` (reliability); relaxed for `tests/` (mocking flexibility).
+- **Type Aliases:** Use the Python 3.12 `type X = ...` keyword syntax. **Never** `X: TypeAlias = ...` — ruff flags it as `UP040`.
 - **Format:** PEP8 enforced via `ruff`; max line length 100 chars.
 - **Testing:** Min. 1 unit test per function; use `tmp_path` for FS tests.
 - **UI vs. Logging:** CLI silent by default.
@@ -164,6 +167,9 @@ Command style mirrors `tar`:
 - **Normalization:** POSIX paths (forward slashes) only; file entries sorted alphabetically in XML.
 - **Security:** UTF-8 text only; sandbox unpacking; abort on absolute paths or traversal (`../`) attempts.
 - **XML Specs:** File content must use unescaped `<![CDATA[ ... ]]>` blocks; no entity encoding for bodies.
+  - `<directory_tree>` is always the **first child** of `<archive>`, placed before all `<file>` elements.
+  - `<directory_tree>` content is also CDATA-wrapped (`"\n" + tree_text + "\n"`) for consistency and to future-proof against special characters in filenames.
+  - An empty archive renders `<directory_tree>` containing just `"."`.
 
 ## Docstring Rules
 - **Format:** Google Style (`Args:`, `Returns:`, `Raises:`).
