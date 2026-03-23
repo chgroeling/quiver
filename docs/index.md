@@ -13,13 +13,13 @@ pip install quiver
 ### Pack files into XML
 
 ```bash
-quiver pack
+quiver -cf archive.xml ./src ./README.md ./docs
 ```
 
 ### Unpack XML into files
 
 ```bash
-quiver unpack
+quiver -xf archive.xml
 ```
 
 ## Development

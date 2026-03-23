@@ -122,14 +122,14 @@ The public API follows the `tarfile` pattern. Entry point: `quiver.open()` in `_
 - Exports: `open`, `QuiverFile`, `QuiverInfo`, `BinaryFileError`, `__version__`
 
 ## CLI
-Command: `quiver [--verbose/-v] [--debug] pack <input_file> -f <output.xml>`
+Command style mirrors `tar`:
 
-- `--verbose` / `-v`: enables `rich` UI output (progress messages)
-- `--debug`: enables `structlog` structured logging to stderr
-- `pack` auto-detects whether `<input_file>` is a file or directory
-- Silent by default — zero output on success without flags
-- `--verbose` / `--debug` are group-level flags; pass them **before** the subcommand name
-- `unpack` subcommand is a stub (`NotImplementedError` equivalent)
+- **Create**: `quiver -cf <archive.xml> <input_path...>` bundles short flags; `-f` must be last in a bundle.
+- **Verbose**: include `-v` (e.g., `quiver -cvf archive.xml src docs`).
+- **Debug logging**: `--debug` (no short form).
+- **Extract stub**: `quiver -xf <archive.xml>` prints "not yet implemented".
+- Inputs after the archive path are packed recursively; multiple paths are allowed.
+- Silent by default—no stdout unless `-v` or `--debug` is supplied.
 
 ## Logging & UI (`src/quiver/logging.py`)
 
@@ -159,7 +159,7 @@ Command: `quiver [--verbose/-v] [--debug] pack <input_file> -f <output.xml>`
 | `QuiverFile.close` | `archive_name=` |
 
 ## Architecture & Internal Mechanisms
-- **CLI Structure:** Use Click's group/command pattern to naturally separate `pack` and `unpack` into subcommands. This aligns with modern CLI UX, keeps help text organized, and makes adding future commands straightforward.
+- **CLI Structure:** A single Click command emulates tar-style flags, including bundled short options (`-cvf`). Custom argument preprocessing expands bundles before Click parses them.
 - **Concurrency & Memory Management (OOM Protection):**
     * I/O operations are handled asynchronously (`asyncio`) or via threading.
     * Implement a strict Reader/Writer pattern using a size-limited queue to prevent Out-of-Memory (OOM) crashes (backpressure).

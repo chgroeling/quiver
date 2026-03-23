@@ -18,21 +18,22 @@ def test_cli_help() -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["--help"])
     assert result.exit_code == 0
-    assert "pack" in result.output.lower()
-    assert "unpack" in result.output.lower()
+    assert "-c" in result.output
+    assert "-x" in result.output
+    assert "-f" in result.output
 
 
-def test_pack_command_requires_arguments() -> None:
-    """Test that pack command fails without required arguments."""
+def test_cli_requires_operation_flag() -> None:
+    """Ensure CLI errors when no operation flag is provided."""
     runner = CliRunner()
-    result = runner.invoke(main, ["pack"])
-    # Must fail: input_file and -f are required
+    result = runner.invoke(main, [])
     assert result.exit_code != 0
+    assert "-c/--create" in result.output
 
 
 def test_unpack_command() -> None:
-    """Test unpack command stub."""
+    """Test extract stub."""
     runner = CliRunner()
-    result = runner.invoke(main, ["unpack"])
-    assert result.exit_code == 0
+    result = runner.invoke(main, ["-x", "-f", "archive.xml"])
+    assert result.exit_code == 1
     assert "not yet implemented" in result.output.lower()
