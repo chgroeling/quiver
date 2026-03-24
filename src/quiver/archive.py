@@ -44,6 +44,10 @@ class BinaryFileError(ValueError):
     """Raised when a file cannot be read as valid UTF-8 text."""
 
 
+class PathTraversalError(ValueError):
+    """Raised when a stored archive path would escape the extraction destination."""
+
+
 # ===========================================================================
 # Layer 1 — Path Normalization
 # ===========================================================================
@@ -78,6 +82,50 @@ def _directory_stored_path(relative: Path, arcname: str | None) -> str:
     if arcname is None:
         return relative_path
     return _normalize_stored_path(str(PurePosixPath(arcname) / relative_path))
+
+
+def _validate_extraction_path(stored_path: str, destination: Path) -> Path:
+    """Validate *stored_path* against *destination* and return the resolved target.
+
+    Rejects absolute paths, any `..` component, and any path that resolves
+    outside the destination sandbox.
+
+    Args:
+        stored_path: The path attribute read from the archive.
+        destination: The resolved absolute extraction root directory.
+
+    Returns:
+        The resolved, sandboxed absolute `Path` for the output file.
+
+    Raises:
+        PathTraversalError: If *stored_path* is absolute, contains `..`,
+            or escapes *destination* after resolution.
+    """
+    # Reject absolute paths and explicit traversal components before any
+    # filesystem interaction.
+    posix = PurePosixPath(stored_path)
+    if posix.is_absolute():
+        raise PathTraversalError(
+            f"Archive entry {stored_path!r} is an absolute path and cannot be extracted safely."
+        )
+    if ".." in posix.parts:
+        raise PathTraversalError(
+            f"Archive entry {stored_path!r} contains '..' and cannot be extracted safely."
+        )
+
+    # Normalize to the local platform path, then resolve against destination.
+    local_path = Path(stored_path)
+    resolved = (destination / local_path).resolve()
+
+    # Ensure the resolved path is still inside the destination sandbox.
+    try:
+        resolved.relative_to(destination)
+    except ValueError as exc:
+        raise PathTraversalError(
+            f"Archive entry {stored_path!r} resolves outside the destination directory."
+        ) from exc
+
+    return resolved
 
 
 # ===========================================================================
@@ -135,6 +183,34 @@ async def _read_text_file_async(path: Path) -> str:
 def _collect_directory_files(directory_path: Path) -> list[Path]:
     """Collect all regular files under *directory_path* recursively."""
     return sorted(path for path in directory_path.rglob("*") if path.is_file())
+
+
+def _parse_archive(archive_path: str) -> list[tuple[str, str]]:
+    """Parse a quiver XML archive and return its file entries.
+
+    Uses `lxml.etree.iterparse` to stream-parse the file, extracting the
+    `path` attribute and CDATA content from each `<file>` element.
+
+    Args:
+        archive_path: Filesystem path to the quiver XML archive.
+
+    Returns:
+        A list of `(stored_path, content)` pairs in document order.
+
+    Raises:
+        FileNotFoundError: If *archive_path* does not exist.
+        ValueError: If the root element is not `<archive>`.
+    """
+    entries: list[tuple[str, str]] = []
+    context = etree.iterparse(archive_path, events=("end",), tag="file")
+    for _event, elem in context:
+        stored_path = elem.get("path", "")
+        content_elem = elem.find("content")
+        content = content_elem.text if content_elem is not None and content_elem.text else ""
+        entries.append((stored_path, content))
+        # Free memory for already-processed elements.
+        elem.clear()
+    return entries
 
 
 # ===========================================================================
@@ -233,6 +309,85 @@ class _PackPipeline:
 
 
 # ===========================================================================
+# Layer 3.5 — Async Extract Pipeline
+# ===========================================================================
+
+
+class _ExtractPipeline:
+    """Bounded-queue async pipeline that writes extracted files to disk.
+
+    Parsing is offloaded to a thread pool so that synchronous `lxml.iterparse`
+    does not block the event loop.  File writing is fully asynchronous via
+    `aiofile`.
+
+    Args:
+        entries: List of `(stored_path, content)` pairs to extract.
+        destination: Resolved absolute path of the extraction root directory.
+    """
+
+    def __init__(self, entries: list[tuple[str, str]], destination: Path) -> None:
+        self._entries = entries
+        self._destination = destination
+
+    def run(self) -> None:
+        """Execute the pipeline synchronously."""
+        asyncio.run(self._run_async())
+
+    async def _run_async(self) -> None:
+        """Feed entries into a bounded queue and run concurrent writer workers."""
+        if not self._entries:
+            return
+
+        worker_count = min(MAX_DIRECTORY_READERS, len(self._entries))
+        work_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+
+        producer_task = asyncio.create_task(self._producer(work_queue, worker_count))
+        worker_tasks = [
+            asyncio.create_task(self._writer_worker(work_queue)) for _ in range(worker_count)
+        ]
+
+        try:
+            await asyncio.gather(producer_task, *worker_tasks)
+        except Exception:
+            producer_task.cancel()
+            for task in worker_tasks:
+                task.cancel()
+            await asyncio.gather(producer_task, *worker_tasks, return_exceptions=True)
+            raise
+
+    async def _producer(
+        self,
+        work_queue: asyncio.Queue[tuple[str, str] | None],
+        worker_count: int,
+    ) -> None:
+        """Feed all entries into *work_queue*, then send sentinel values."""
+        for entry in self._entries:
+            await work_queue.put(entry)
+        for _ in range(worker_count):
+            await work_queue.put(None)
+
+    async def _writer_worker(
+        self,
+        work_queue: asyncio.Queue[tuple[str, str] | None],
+    ) -> None:
+        """Consume entries from *work_queue* and write each to disk."""
+        while True:
+            item = await work_queue.get()
+            if item is None:
+                return
+            stored_path, content = item
+            target = _validate_extraction_path(stored_path, self._destination)
+            await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
+            async with async_open(target, "w", encoding="utf-8") as afp:
+                await afp.write(content)
+            logger.debug(
+                "Extracted file",
+                entry_path=stored_path,
+                size=len(content.encode("utf-8")),
+            )
+
+
+# ===========================================================================
 # Layer 4 — XML Serialization
 # ===========================================================================
 
@@ -320,7 +475,7 @@ class QuiverFile:
     method or the module-level `quiver.open` function to create instances.
 
     Supported modes:
-        `'r'`: Open for reading (not yet implemented).
+        `'r'`: Open for reading; parses the archive immediately on open.
         `'w'`: Open for writing; creates or overwrites the archive.
         `'a'`: Open for appending (not yet implemented).
 
@@ -342,6 +497,16 @@ class QuiverFile:
         self._entries: list[tuple[QuiverInfo, str]] = []
         self._closed = False
         logger.debug("QuiverFile opened", archive_name=name, mode=mode)
+
+        if mode == "r":
+            archive_path = Path(name)
+            if not archive_path.exists():
+                raise FileNotFoundError(f"Archive not found: {name!r}")
+            raw_entries = _parse_archive(name)
+            self._entries = [
+                (QuiverInfo(name=stored_path, size=len(content.encode("utf-8"))), content)
+                for stored_path, content in raw_entries
+            ]
 
     # ------------------------------------------------------------------
     # Factory
@@ -420,27 +585,21 @@ class QuiverFile:
         logger.debug("Added file", entry_path=stored_path, size=info.size)
 
     # ------------------------------------------------------------------
-    # Read API (scaffolded — read mode not yet implemented)
+    # Read API
     # ------------------------------------------------------------------
 
     def getnames(self) -> list[str]:
         """Return a list of archive member paths.
 
-        In write mode, returns the paths of all files added so far.
-        In read mode, raises `NotImplementedError`.
+        Returns the paths of all files in the archive, regardless of mode.
         """
-        if self._mode == "r":
-            raise NotImplementedError("getnames() in read mode is not yet implemented.")
         return [info.name for info, _ in self._entries]
 
     def getmembers(self) -> list[QuiverInfo]:
         """Return a list of [QuiverInfo][] objects for all archive members.
 
-        In write mode, returns metadata for all files added so far.
-        In read mode, raises `NotImplementedError`.
+        Returns metadata for all files in the archive, regardless of mode.
         """
-        if self._mode == "r":
-            raise NotImplementedError("getmembers() in read mode is not yet implemented.")
         return [info for info, _ in self._entries]
 
     def extractall(
@@ -448,14 +607,40 @@ class QuiverFile:
         path: str = ".",
         members: list[QuiverInfo] | None = None,
     ) -> None:
-        """Extract archive contents to *path*.
+        """Extract all (or selected) archive members to *path*.
 
-        Not yet implemented.
+        Uses an asynchronous pipeline for concurrent file writing.
+        Each entry's path is validated against *path* before extraction
+        to prevent directory traversal attacks.
+
+        Args:
+            path: Destination directory. Defaults to the current directory.
+            members: If given, only these [QuiverInfo][] members are extracted.
+                Must be a subset of [getmembers][].
 
         Raises:
-            NotImplementedError: Always.
+            ValueError: If the archive is not open in read mode.
+            PathTraversalError: If any entry path escapes the destination.
+            FileNotFoundError: If the destination directory cannot be created.
         """
-        raise NotImplementedError("extractall() is not yet implemented.")
+        if self._mode != "r":
+            raise ValueError(
+                f"Cannot extract in mode {self._mode!r}. Open the archive with mode 'r'."
+            )
+
+        destination = Path(path).resolve()
+        destination.mkdir(parents=True, exist_ok=True)
+
+        allowed_names: set[str] | None = (
+            {info.name for info in members} if members is not None else None
+        )
+        entries = [
+            (info.name, content)
+            for info, content in self._entries
+            if allowed_names is None or info.name in allowed_names
+        ]
+
+        _ExtractPipeline(entries=entries, destination=destination).run()
 
     # ------------------------------------------------------------------
     # Close / flush

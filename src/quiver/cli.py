@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from quiver.archive import BinaryFileError, QuiverFile
+from quiver.archive import BinaryFileError, PathTraversalError, QuiverFile
 from quiver.logging import configure_debug_logging, get_console
 
 _BUNDLABLE_FLAGS = {"c", "x", "v", "f"}
@@ -99,8 +99,7 @@ def main(
     if create:
         _run_create(archive_file, verbose, inputs)
     elif extract:
-        click.echo("Extract command not yet implemented")
-        sys.exit(1)
+        _run_extract(archive_file, verbose, inputs)
 
 
 def _validate_mode_flags(create: bool, extract: bool) -> None:
@@ -133,6 +132,32 @@ def _run_create(archive_file: str | None, verbose: bool, inputs: tuple[str, ...]
         sys.exit(1)
     except OSError as exc:
         click.echo(f"Error writing archive: {exc}", err=True)
+        sys.exit(1)
+
+    if verbose:
+        console.print("[green]Done.[/green]")
+
+
+def _run_extract(archive_file: str | None, verbose: bool, inputs: tuple[str, ...]) -> None:
+    if not archive_file:
+        raise click.UsageError("Option '-f/--file' is required when extracting an archive.")
+
+    destination = inputs[0] if inputs else "."
+    console = get_console(verbose)
+    if verbose:
+        console.print(f"Extracting [bold]{archive_file}[/bold] → [bold]{destination}[/bold]...")
+
+    try:
+        with QuiverFile.open(archive_file, mode="r") as qf:
+            qf.extractall(path=destination)
+    except FileNotFoundError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    except PathTraversalError as exc:
+        click.echo(f"Security error: {exc}", err=True)
+        sys.exit(1)
+    except OSError as exc:
+        click.echo(f"Error extracting archive: {exc}", err=True)
         sys.exit(1)
 
     if verbose:

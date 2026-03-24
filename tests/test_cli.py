@@ -29,11 +29,3 @@ def test_cli_requires_operation_flag() -> None:
     result = runner.invoke(main, [])
     assert result.exit_code != 0
     assert "-c/--create" in result.output
-
-
-def test_unpack_command() -> None:
-    """Test extract stub."""
-    runner = CliRunner()
-    result = runner.invoke(main, ["-x", "-f", "archive.xml"])
-    assert result.exit_code == 1
-    assert "not yet implemented" in result.output.lower()

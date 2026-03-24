@@ -36,10 +36,18 @@ def test_quiverinfo_repr() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_valid_modes() -> None:
-    for mode in ("r", "w", "a"):
+def test_valid_modes(tmp_path: Path) -> None:
+    for mode in ("w", "a"):
         qf = QuiverFile("archive.xml", mode=mode)
         assert qf._mode == mode
+    # Read mode requires an existing archive file.
+    archive = tmp_path / "archive.xml"
+    f = tmp_path / "f.txt"
+    f.write_text("x", encoding="utf-8")
+    with QuiverFile(str(archive), mode="w") as qf:
+        qf.add(str(f))
+    qf_r = QuiverFile(str(archive), mode="r")
+    assert qf_r._mode == "r"
 
 
 def test_invalid_mode_raises() -> None:
@@ -204,7 +212,13 @@ def test_add_directory_arcname_prefixes_paths(tmp_path: Path) -> None:
 def test_add_in_read_mode_raises(tmp_path: Path) -> None:
     input_file = tmp_path / "input.txt"
     input_file.write_text("data", encoding="utf-8")
-    with pytest.raises(ValueError, match="mode"), QuiverFile.open("dummy.xml", mode="r") as qf:
+    archive_path = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive_path), mode="w") as qf:
+        qf.add(str(input_file))
+    with (
+        pytest.raises(ValueError, match="mode"),
+        QuiverFile.open(str(archive_path), mode="r") as qf,
+    ):
         qf.add(str(input_file))
 
 
@@ -261,27 +275,189 @@ def test_getmembers_returns_quiverinfo_objects(tmp_path: Path) -> None:
     assert members[0].size == len(b"hello")
 
 
-def test_getnames_in_read_mode_raises() -> None:
-    qf = QuiverFile.open("dummy.xml", mode="r")
-    with pytest.raises(NotImplementedError):
-        qf.getnames()
-
-
-def test_getmembers_in_read_mode_raises() -> None:
-    qf = QuiverFile.open("dummy.xml", mode="r")
-    with pytest.raises(NotImplementedError):
-        qf.getmembers()
-
-
 # ---------------------------------------------------------------------------
-# extractall() — scaffolded as NotImplementedError
+# extractall() — extraction
 # ---------------------------------------------------------------------------
 
 
-def test_extractall_not_implemented() -> None:
-    qf = QuiverFile.open("dummy.xml", mode="r")
-    with pytest.raises(NotImplementedError):
+def test_extractall_recreates_files(tmp_path: Path) -> None:
+    """Round-trip: pack files then extractall() recreates the originals."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("alpha", encoding="utf-8")
+    nested = src / "sub"
+    nested.mkdir()
+    (nested / "b.txt").write_text("beta", encoding="utf-8")
+
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(src))
+
+    dest = tmp_path / "out"
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        qf.extractall(path=str(dest))
+
+    assert (dest / "a.txt").read_text(encoding="utf-8") == "alpha"
+    assert (dest / "sub" / "b.txt").read_text(encoding="utf-8") == "beta"
+
+
+def test_extractall_creates_intermediate_dirs(tmp_path: Path) -> None:
+    """Intermediate parent directories are created automatically."""
+    src = tmp_path / "src"
+    deep = src / "x" / "y" / "z"
+    deep.mkdir(parents=True)
+    (deep / "deep.txt").write_text("deep", encoding="utf-8")
+
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(src))
+
+    dest = tmp_path / "out"
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        qf.extractall(path=str(dest))
+
+    assert (dest / "x" / "y" / "z" / "deep.txt").read_text(encoding="utf-8") == "deep"
+
+
+def test_extractall_defaults_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """extractall() with no path argument writes to the current working directory."""
+    monkeypatch.chdir(tmp_path)
+    f = tmp_path / "hello.txt"
+    f.write_text("hi", encoding="utf-8")
+
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(f))
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
         qf.extractall()
+
+    # The extracted file should be relative to cwd (tmp_path).
+    extracted = list(tmp_path.glob("*.txt"))
+    names = {p.name for p in extracted}
+    assert "hello.txt" in names
+
+
+def test_extractall_with_members_filter(tmp_path: Path) -> None:
+    """Only the specified members are extracted when members= is given."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep.txt").write_text("keep", encoding="utf-8")
+    (src / "skip.txt").write_text("skip", encoding="utf-8")
+
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(src))
+
+    dest = tmp_path / "out"
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        members = [m for m in qf.getmembers() if m.name.endswith("keep.txt")]
+        qf.extractall(path=str(dest), members=members)
+
+    assert (dest / "keep.txt").exists()
+    assert not (dest / "skip.txt").exists()
+
+
+def test_extractall_in_write_mode_raises(tmp_path: Path) -> None:
+    """extractall() raises ValueError when the archive is open for writing."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf, pytest.raises(ValueError, match="mode"):
+        qf.extractall()
+
+
+# ---------------------------------------------------------------------------
+# Path sandboxing
+# ---------------------------------------------------------------------------
+
+
+def test_validate_extraction_path_accepts_clean(tmp_path: Path) -> None:
+    from quiver.archive import _validate_extraction_path
+
+    result = _validate_extraction_path("subdir/file.txt", tmp_path)
+    assert result == (tmp_path / "subdir" / "file.txt").resolve()
+
+
+def test_validate_extraction_path_rejects_absolute(tmp_path: Path) -> None:
+    from quiver.archive import PathTraversalError as _PathTraversalError
+    from quiver.archive import _validate_extraction_path
+
+    with pytest.raises(_PathTraversalError, match="absolute"):
+        _validate_extraction_path("/etc/passwd", tmp_path)
+
+
+def test_validate_extraction_path_rejects_traversal(tmp_path: Path) -> None:
+    from quiver.archive import PathTraversalError as _PathTraversalError
+    from quiver.archive import _validate_extraction_path
+
+    with pytest.raises(_PathTraversalError, match=r"\.\."):
+        _validate_extraction_path("../escape.txt", tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# _parse_archive()
+# ---------------------------------------------------------------------------
+
+
+def test_parse_archive_round_trip(tmp_path: Path) -> None:
+    """_parse_archive returns entries matching what was packed."""
+    from quiver.archive import _parse_archive
+
+    f1 = tmp_path / "a.txt"
+    f2 = tmp_path / "b.txt"
+    f1.write_text("alpha", encoding="utf-8")
+    f2.write_text("beta", encoding="utf-8")
+
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(f1))
+        qf.add(str(f2))
+
+    entries = _parse_archive(str(archive))
+    entry_map = dict(entries)
+    assert any(k.endswith("a.txt") for k in entry_map)
+    assert any(k.endswith("b.txt") for k in entry_map)
+    contents = list(entry_map.values())
+    assert "alpha" in contents
+    assert "beta" in contents
+
+
+# ---------------------------------------------------------------------------
+# getnames() and getmembers() in read mode
+# ---------------------------------------------------------------------------
+
+
+def test_getnames_read_mode(tmp_path: Path) -> None:
+    """getnames() works in read mode after archive is opened."""
+    f = tmp_path / "sample.txt"
+    f.write_text("hello", encoding="utf-8")
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(f))
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        names = qf.getnames()
+    assert any(n.endswith("sample.txt") for n in names)
+
+
+def test_getmembers_read_mode(tmp_path: Path) -> None:
+    """getmembers() returns QuiverInfo objects in read mode."""
+    f = tmp_path / "sample.txt"
+    f.write_text("hello", encoding="utf-8")
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(f))
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        members = qf.getmembers()
+    assert len(members) == 1
+    assert isinstance(members[0], QuiverInfo)
+    assert members[0].size == len(b"hello")
+
+
+def test_open_read_mode_missing_archive_raises(tmp_path: Path) -> None:
+    """Opening a non-existent archive in read mode raises FileNotFoundError."""
+    with pytest.raises(FileNotFoundError):
+        QuiverFile.open(str(tmp_path / "no_such.xml"), mode="r")
 
 
 # ---------------------------------------------------------------------------
