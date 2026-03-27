@@ -30,6 +30,7 @@ quiver/
 │   ├── test_archive.py          # QuiverFile / QuiverInfo unit tests
 │   ├── test_create_cli.py       # create operation integration tests
 │   ├── test_extract_cli.py      # extract operation integration tests
+│   ├── test_embedding.py        # preamble/epilogue embedding integration tests
 │   └── test_utils.py            # utils/__init__.py unit tests
 │
 └── docs/                        # MkDocs documentation
@@ -74,7 +75,7 @@ Run sequence: `uv run ruff format src/ tests/ && uv run ruff check src/ tests/ &
 ### Structure
 - **Location:** `tests/` directory.
 - **Mapping:** 1:1 module-to-test file ratio.
-    - `cli.py` -> `test_cli.py` (smoke), `test_create_cli.py` (create integration), `test_extract_cli.py` (extract integration).
+    - `cli.py` -> `test_cli.py` (smoke), `test_create_cli.py` (create integration), `test_extract_cli.py` (extract integration), `test_embedding.py` (embedding integration).
     - `archive.py` -> `test_archive.py`.
     - `utils/__init__.py` -> `test_utils.py`.
 - **Practices:** Use `tmp_path` for FS tests; prioritize critical path coverage.
@@ -106,14 +107,14 @@ Run sequence: `uv run ruff format src/ tests/ && uv run ruff check src/ tests/ &
 The public API follows the `tarfile` pattern. Entry point: `quiver.open()` in `__init__.py`.
 
 ### `QuiverFile` (`src/quiver/archive.py`)
-- Factory: `QuiverFile.open(name, mode)` or `quiver.open(name, mode)`
+- Factory: `QuiverFile.open(name, mode, preamble=None, epilogue=None)` or `quiver.open(name, mode, preamble=None, epilogue=None)`
 - Modes: `'r'` (read), `'w'` (write), `'a'` (append)
 - Context manager: calls `close()` on `__exit__`
 - `add(name, arcname=None)` — accepts file or directory input; validates UTF-8 encoding **and** XML-1.0 character compatibility (via `_validate_xml_compatible`), normalizes POSIX paths, stores entries
 - Directory packing uses an internal async reader/writer flow with bounded queue backpressure and a single writer task
-- `close()` — sorts entries alphabetically, builds lxml XML tree, writes to disk
+- `close()` — sorts entries alphabetically, builds lxml XML tree, writes to disk; prepends preamble and appends epilogue if set
 - `getnames()` / `getmembers()` — return names / `QuiverInfo` objects; works in both read and write mode
-- `extractall(path=".", members=None)` — extracts all (or selected) members to *path* using an async pipeline; validates every path against the destination sandbox before writing
+- `extractall(path=".", members=None)` — extracts all (or selected) members to *path* using an async pipeline; validates every path against the destination sandbox before writing; writes `PREAMBLE` and `EPILOGUE` files to *path* when the archive contains non-whitespace surrounding text
 
 ### `QuiverInfo` (`src/quiver/archive.py`)
 - `name: str` — normalized POSIX path
@@ -126,6 +127,7 @@ The public API follows the `tarfile` pattern. Entry point: `quiver.open()` in `_
 
 ### `quiver.open()` (`src/quiver/__init__.py`)
 - Top-level factory; delegates to `QuiverFile.open()`
+- Accepts explicit `preamble` and `epilogue` keyword arguments (no `**kwargs` — typed directly)
 - Exports: `open`, `QuiverFile`, `QuiverInfo`, `BinaryFileError`, `PathTraversalError`, `__version__`
 
 ## CLI
@@ -135,6 +137,8 @@ Command style mirrors `tar`:
 - **Extract**: `quiver -xf <archive.xml> [destination]` extracts to `destination` (default: `.`).
 - **Verbose**: include `-v` (e.g., `quiver -cvf archive.xml src docs`).
 - **Debug logging**: `--debug` (no short form).
+- **Preamble**: `--preamble <text_or_filepath>` — prepends text before the XML. If the argument is an existing file path, its contents are used; otherwise treated as a raw string.
+- **Epilogue**: `--epilogue <text_or_filepath>` — appends text after the XML. Same filepath-or-string resolution as `--preamble`.
 - Inputs after the archive path are packed recursively for `-c`; for `-x` the first positional arg is the destination.
 - Silent by default—no stdout unless `-v` or `--debug` is supplied.
 - **Validation**: Mode flags (`-c`, `-x`) are mutually exclusive; exactly one is required.
@@ -172,12 +176,15 @@ Command style mirrors `tar`:
 - **Content validation (Layer 2):** File content goes through two sequential checks inside `_read_text_file()` / `_read_text_file_async()` before it is stored:
   1. `_decode_utf8()` — rejects non-UTF-8 bytes → `BinaryFileError`.
   2. `_validate_xml_compatible()` — rejects XML-1.0-forbidden characters (matched by `_XML_FORBIDDEN_RE`: `[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]`) → `BinaryFileError` with line/col/hex location info (up to `_MAX_REPORTED_OFFENCES = 5` occurrences). This prevents a late crash inside `lxml.etree.CDATA()` at serialization time with no useful context.
-- **Extraction Pipeline (`_ExtractPipeline`, Layer 3.5):** Mirrors `_PackPipeline`. Feeds `(stored_path, content)` pairs through a bounded `asyncio.Queue`; concurrent worker tasks validate, create parent dirs via `asyncio.to_thread`, and write files with `aiofile`. XML parsing uses `lxml.iterparse` to avoid loading the whole document into memory.
-- **Read mode (`QuiverFile.__init__`):** Opening in `'r'` immediately parses the archive via `_parse_archive()` and populates `self._entries`; raises `FileNotFoundError` if the file does not exist.
+- **Extraction Pipeline (`_ExtractPipeline`, Layer 3.5):** Mirrors `_PackPipeline`. Feeds `(stored_path, content)` pairs through a bounded `asyncio.Queue`; concurrent worker tasks validate, create parent dirs via `asyncio.to_thread`, and write files with `aiofile`. XML parsing uses `lxml.etree.fromstring` on the isolated XML block (not the full file).
+- **Read mode (`QuiverFile.__init__`):** Opening in `'r'` immediately parses the archive via `_parse_archive()` and populates `self._entries`, `self._preamble`, and `self._epilogue`; raises `FileNotFoundError` if the file does not exist.
+- **Embedded archive (preamble/epilogue):** The archive file may contain arbitrary plain text before and after the `<archive>` block. `_split_archive_text()` locates the **first** `<archive ...>` and first `</archive>` to isolate the XML; everything outside is preamble/epilogue. The **first-match rule** means any subsequent `<archive>` blocks are treated as pure epilogue text, never parsed as XML.
 - **XML Specs:** File content must use unescaped `<![CDATA[ ... ]]>` blocks; no entity encoding for bodies.
   - `<directory_tree>` is always the **first child** of `<archive>`, placed before all `<file>` elements.
   - `<directory_tree>` content is also CDATA-wrapped (`"\n" + tree_text + "\n"`) for consistency and to future-proof against special characters in filenames.
   - An empty archive renders `<directory_tree>` containing just `"."`.)
+- **Sentinel constants (`_PREAMBLE_SENTINEL`, `_EPILOGUE_SENTINEL`):** Defined in Layer 0 of `archive.py`. Written at the preamble→XML and XML→epilogue seams so boundaries are deterministic and round-trippable. Currently `_PREAMBLE_SENTINEL = "\n"` (ensures `<archive>` starts on its own line); `_EPILOGUE_SENTINEL = ""` (lxml's own trailing `\n` already provides the separator). Changing the values requires updating `_write_archive`, `_split_archive_text`, and the sentinel unit tests.
+- **lxml `pretty_print` trailing newline:** `etree.tostring(..., pretty_print=True)` **always** appends a `\n` after the closing tag. This `\n` appears at the **start of the epilogue slice** in `_split_archive_text` (it is outside `</archive>`, not inside `xml_content`). `_split_archive_text` strips exactly one leading `\n` from the epilogue unconditionally to absorb this artifact and ensure verbatim round-trip. Do not add logic that assumes `xml_content` ends with `\n` — it ends with `>`.
 
 ## Docstring Rules
 - **Format:** Google Style (`Args:`, `Returns:`, `Raises:`).
