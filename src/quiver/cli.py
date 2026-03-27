@@ -82,6 +82,16 @@ class TarStyleCommand(click.Command):
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable rich UI output.")
 @click.option("--debug", is_flag=True, help="Enable structured debug logging.")
+@click.option(
+    "--preamble",
+    default=None,
+    help="Text or file path to prepend before the archive XML (create mode only).",
+)
+@click.option(
+    "--epilogue",
+    default=None,
+    help="Text or file path to append after the archive XML (create mode only).",
+)
 @click.argument("inputs", nargs=-1, type=click.Path(path_type=str))
 def main(
     create: bool,
@@ -89,6 +99,8 @@ def main(
     archive_file: str | None,
     verbose: bool,
     debug: bool,
+    preamble: str | None,
+    epilogue: str | None,
     inputs: tuple[str, ...],
 ) -> None:
     """Pack and unpack text files into machine-readable XML."""
@@ -97,7 +109,7 @@ def main(
     configure_debug_logging(debug)
 
     if create:
-        _run_create(archive_file, verbose, inputs)
+        _run_create(archive_file, verbose, inputs, preamble=preamble, epilogue=epilogue)
     elif extract:
         _run_extract(archive_file, verbose, inputs)
 
@@ -109,11 +121,20 @@ def _validate_mode_flags(create: bool, extract: bool) -> None:
         raise click.UsageError("Specify -c/--create or -x/--extract to select an operation.")
 
 
-def _run_create(archive_file: str | None, verbose: bool, inputs: tuple[str, ...]) -> None:
+def _run_create(
+    archive_file: str | None,
+    verbose: bool,
+    inputs: tuple[str, ...],
+    preamble: str | None = None,
+    epilogue: str | None = None,
+) -> None:
     if not archive_file:
         raise click.UsageError("Option '-f/--file' is required when creating an archive.")
     if not inputs:
         raise click.UsageError("Provide at least one input file or directory to archive.")
+
+    resolved_preamble = _resolve_text_or_file(preamble)
+    resolved_epilogue = _resolve_text_or_file(epilogue)
 
     console = get_console(verbose)
     if verbose:
@@ -121,7 +142,9 @@ def _run_create(archive_file: str | None, verbose: bool, inputs: tuple[str, ...]
         console.print(f"Packing [bold]{sources}[/bold] → [bold]{archive_file}[/bold]...")
 
     try:
-        with QuiverFile.open(archive_file, mode="w") as qf:
+        with QuiverFile.open(
+            archive_file, mode="w", preamble=resolved_preamble, epilogue=resolved_epilogue
+        ) as qf:
             for input_path in inputs:
                 qf.add(input_path)
     except FileNotFoundError as exc:
@@ -136,6 +159,26 @@ def _run_create(archive_file: str | None, verbose: bool, inputs: tuple[str, ...]
 
     if verbose:
         console.print("[green]Done.[/green]")
+
+
+def _resolve_text_or_file(value: str | None) -> str | None:
+    """Return the content of *value* as a string.
+
+    If *value* is a path to an existing file, return the file's UTF-8 text.
+    Otherwise return *value* unchanged (treating it as a raw string).
+
+    Args:
+        value: Raw CLI argument, a file path, or ``None``.
+
+    Returns:
+        Resolved text, or ``None`` if *value* is ``None``.
+    """
+    if value is None:
+        return None
+    candidate = Path(value)
+    if candidate.is_file():
+        return candidate.read_text(encoding="utf-8")
+    return value
 
 
 def _run_extract(archive_file: str | None, verbose: bool, inputs: tuple[str, ...]) -> None:

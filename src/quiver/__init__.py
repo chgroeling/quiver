@@ -15,24 +15,33 @@ __all__ = [
 ]
 
 
-def open(name: str, mode: str = "r", **kwargs: object) -> QuiverFile:
-    """Open a quiver archive and return a :class:`QuiverFile` instance.
+def open(
+    name: str,
+    mode: str = "r",
+    preamble: str | None = None,
+    epilogue: str | None = None,
+) -> QuiverFile:
+    """Open a quiver archive and return a [QuiverFile][] instance.
 
-    This is the top-level factory function, analogous to :func:`tarfile.open`.
+    This is the top-level factory function, analogous to `tarfile.open`.
 
     Args:
         name: Path to the archive file.
         mode: ``'r'`` (read), ``'w'`` (write), or ``'a'`` (append).
-        **kwargs: Passed through to :meth:`QuiverFile.open`.
+        preamble: Optional text to prepend before the XML when writing.
+            Ignored in read mode (preamble is parsed from the file).
+        epilogue: Optional text to append after the XML when writing.
+            Ignored in read mode (epilogue is parsed from the file).
 
     Returns:
-        A new :class:`QuiverFile` instance.
+        A new [QuiverFile][] instance.
 
-    Example::
-
+    Example:
+        ```python
         import quiver
 
         with quiver.open("archive.xml", mode="w") as qf:
             qf.add("README.md")
+        ```
     """
-    return QuiverFile.open(name, mode, **kwargs)
+    return QuiverFile.open(name, mode, preamble=preamble, epilogue=epilogue)

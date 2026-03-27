@@ -515,7 +515,8 @@ def test_parse_archive_round_trip(tmp_path: Path) -> None:
         qf.add(str(f2))
 
     entries = _parse_archive(str(archive))
-    entry_map = dict(entries)
+    raw_entries, _preamble, _epilogue = entries
+    entry_map = dict(raw_entries)
     assert any(k.endswith("a.txt") for k in entry_map)
     assert any(k.endswith("b.txt") for k in entry_map)
     contents = list(entry_map.values())

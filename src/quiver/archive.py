@@ -40,6 +40,15 @@ ARCHIVE_VERSION = "1.0"
 MAX_DIRECTORY_READERS = 8
 QUEUE_MAXSIZE = 64
 
+# Sentinels written at the preamble→XML and XML→epilogue seams.
+# Defined as constants so the marker can be changed in one place.
+# _PREAMBLE_SENTINEL is appended after the preamble so that <archive> always
+# starts on its own line.  _EPILOGUE_SENTINEL is empty because lxml
+# pretty_print already ends the XML with \n, which acts as the natural
+# separator before the epilogue.
+_PREAMBLE_SENTINEL = "\n"
+_EPILOGUE_SENTINEL = ""
+
 
 class BinaryFileError(ValueError):
     """Raised when a file cannot be read as valid UTF-8 text."""
@@ -232,32 +241,97 @@ def _collect_directory_files(directory_path: Path) -> list[Path]:
     return sorted(path for path in directory_path.rglob("*") if path.is_file())
 
 
-def _parse_archive(archive_path: str) -> list[tuple[str, str]]:
-    """Parse a quiver XML archive and return its file entries.
+# Matches the opening tag of the first <archive ...> element.
+_ARCHIVE_OPEN_RE = re.compile(r"<archive(?:\s[^>]*)?>")
+# Matches the first </archive> closing tag.
+_ARCHIVE_CLOSE_RE = re.compile(r"</archive>")
 
-    Uses `lxml.etree.iterparse` to stream-parse the file, extracting the
-    `path` attribute and CDATA content from each `<file>` element.
+
+def _split_archive_text(raw: str) -> tuple[str, str, str]:
+    """Split *raw* file content into preamble, XML, and epilogue.
+
+    Locates the first `<archive ...>` opening tag and the first `</archive>`
+    closing tag to isolate the embedded XML block.  Everything before the
+    opening tag is the preamble; everything after the closing tag is the
+    epilogue.
+
+    Args:
+        raw: Full text content of the archive file.
+
+    Returns:
+        A ``(preamble, xml_content, epilogue)`` triple where *xml_content*
+        is the full `<archive>…</archive>` string ready for ``lxml`` parsing.
+
+    Raises:
+        ValueError: If no `<archive>` or `</archive>` tag can be found.
+    """
+    open_match = _ARCHIVE_OPEN_RE.search(raw)
+    if open_match is None:
+        raise ValueError("No <archive> element found in file.")
+
+    close_match = _ARCHIVE_CLOSE_RE.search(raw, open_match.start())
+    if close_match is None:
+        raise ValueError("No </archive> closing tag found in file.")
+
+    preamble = raw[: open_match.start()]
+    xml_content = raw[open_match.start() : close_match.end()]
+    epilogue = raw[close_match.end() :]
+
+    # Remove the sentinels injected by _write_archive, but only when the
+    # surrounding text is non-empty (no sentinel is written for absent
+    # preamble/epilogue, so stripping is skipped symmetrically).  Also skip
+    # stripping when the sentinel itself is empty (no-op sentinel).
+    if _PREAMBLE_SENTINEL and preamble and preamble.endswith(_PREAMBLE_SENTINEL):
+        preamble = preamble[: -len(_PREAMBLE_SENTINEL)]
+    if _EPILOGUE_SENTINEL and epilogue and epilogue.startswith(_EPILOGUE_SENTINEL):
+        epilogue = epilogue[len(_EPILOGUE_SENTINEL) :]
+    # lxml pretty_print always appends \n after </archive>.  That \n lands at
+    # the start of the epilogue slice (not inside xml_content) and is a
+    # formatting artifact, not user content.  Strip exactly one leading \n so
+    # the epilogue round-trips verbatim.  Only strip when epilogue is non-empty
+    # to keep the no-epilogue path a no-op.
+    if epilogue.startswith("\n"):
+        epilogue = epilogue[1:]
+
+    return preamble, xml_content, epilogue
+
+
+type _ParseResult = tuple[list[tuple[str, str]], str, str]
+
+
+def _parse_archive(archive_path: str) -> _ParseResult:
+    """Parse a quiver XML archive and return its file entries with surrounding text.
+
+    Reads the raw file, splits out any preamble and epilogue via
+    [_split_archive_text][], then parses only the first `<archive>` XML block
+    using `lxml.etree.fromstring`.  CDATA text from each `<file>` element is
+    extracted verbatim.
 
     Args:
         archive_path: Filesystem path to the quiver XML archive.
 
     Returns:
-        A list of `(stored_path, content)` pairs in document order.
+        A tuple of ``(entries, preamble, epilogue)`` where *entries* is a list
+        of ``(stored_path, content)`` pairs in document order, *preamble* is
+        the raw text before the first ``<archive>`` tag, and *epilogue* is the
+        raw text after the first ``</archive>`` tag.
 
     Raises:
         FileNotFoundError: If *archive_path* does not exist.
-        ValueError: If the root element is not `<archive>`.
+        ValueError: If no ``<archive>`` element is found.
     """
+    raw = Path(archive_path).read_text(encoding="utf-8")
+    preamble, xml_content, epilogue = _split_archive_text(raw)
+
+    root = etree.fromstring(xml_content.encode("utf-8"))  # noqa: S320
     entries: list[tuple[str, str]] = []
-    context = etree.iterparse(archive_path, events=("end",), tag="file")
-    for _event, elem in context:
+    for elem in root.iter("file"):
         stored_path = elem.get("path", "")
         content_elem = elem.find("content")
         content = content_elem.text if content_elem is not None and content_elem.text else ""
         entries.append((stored_path, content))
-        # Free memory for already-processed elements.
-        elem.clear()
-    return entries
+
+    return entries, preamble, epilogue
 
 
 # ===========================================================================
@@ -469,21 +543,43 @@ def _build_xml_tree(entries: list[tuple[QuiverInfo, str]]) -> etree._Element:
     return root
 
 
-def _write_archive(output_path: str, entries: list[tuple[QuiverInfo, str]]) -> None:
+def _write_archive(
+    output_path: str,
+    entries: list[tuple[QuiverInfo, str]],
+    preamble: str | None = None,
+    epilogue: str | None = None,
+) -> None:
     """Serialize the XML archive tree to *output_path*.
+
+    Optionally wraps the XML with plain-text *preamble* and/or *epilogue*.
+    A single newline is inserted between the preamble and the opening
+    ``<archive>`` tag, and between the closing ``</archive>`` tag and the
+    epilogue, so that the boundaries are always on separate lines.
 
     Args:
         output_path: Destination file path.
-        entries: List of `(QuiverInfo, content)` pairs to include.
+        entries: List of ``(QuiverInfo, content)`` pairs to include.
+        preamble: Optional text to prepend before the XML.
+        epilogue: Optional text to append after the XML.
     """
     root = _build_xml_tree(entries)
-    xml_bytes = etree.tostring(
+    xml_str = etree.tostring(
         root,
         pretty_print=True,
         xml_declaration=False,
         encoding="unicode",
     )
-    Path(output_path).write_text(xml_bytes, encoding="utf-8")
+
+    parts: list[str] = []
+    if preamble:
+        parts.append(preamble)
+        parts.append(_PREAMBLE_SENTINEL)
+    parts.append(xml_str)
+    if epilogue:
+        parts.append(_EPILOGUE_SENTINEL)
+        parts.append(epilogue)
+
+    Path(output_path).write_text("".join(parts), encoding="utf-8")
 
 
 # ===========================================================================
@@ -534,7 +630,13 @@ class QuiverFile:
         ```
     """
 
-    def __init__(self, name: str, mode: str = "r") -> None:
+    def __init__(
+        self,
+        name: str,
+        mode: str = "r",
+        preamble: str | None = None,
+        epilogue: str | None = None,
+    ) -> None:
         if mode not in VALID_MODES:
             raise ValueError(
                 f"Invalid mode {mode!r}. Must be one of: {', '.join(sorted(VALID_MODES))}"
@@ -543,13 +645,17 @@ class QuiverFile:
         self._mode = mode
         self._entries: list[tuple[QuiverInfo, str]] = []
         self._closed = False
+        self._preamble: str | None = preamble
+        self._epilogue: str | None = epilogue
         logger.debug("QuiverFile opened", archive_name=name, mode=mode)
 
         if mode == "r":
             archive_path = Path(name)
             if not archive_path.exists():
                 raise FileNotFoundError(f"Archive not found: {name!r}")
-            raw_entries = _parse_archive(name)
+            raw_entries, parsed_preamble, parsed_epilogue = _parse_archive(name)
+            self._preamble = parsed_preamble if parsed_preamble.strip() else None
+            self._epilogue = parsed_epilogue if parsed_epilogue.strip() else None
             self._entries = [
                 (QuiverInfo(name=stored_path, size=len(content.encode("utf-8"))), content)
                 for stored_path, content in raw_entries
@@ -560,13 +666,21 @@ class QuiverFile:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def open(name: str, mode: str = "r", **kwargs: object) -> QuiverFile:  # noqa: ARG004
+    def open(
+        name: str,
+        mode: str = "r",
+        preamble: str | None = None,
+        epilogue: str | None = None,
+    ) -> QuiverFile:
         """Open a quiver archive and return a [QuiverFile][] instance.
 
         Args:
             name: Path to the archive file.
             mode: `'r'` (read), `'w'` (write), or `'a'` (append).
-            **kwargs: Reserved for future use.
+            preamble: Optional text to prepend before the XML when writing.
+                Ignored in read mode (preamble is parsed from the file).
+            epilogue: Optional text to append after the XML when writing.
+                Ignored in read mode (epilogue is parsed from the file).
 
         Returns:
             A new [QuiverFile][] instance.
@@ -574,7 +688,7 @@ class QuiverFile:
         Raises:
             ValueError: If *mode* is not one of `'r'`, `'w'`, `'a'`.
         """
-        return QuiverFile(name, mode)
+        return QuiverFile(name, mode, preamble=preamble, epilogue=epilogue)
 
     # ------------------------------------------------------------------
     # Context manager
@@ -688,6 +802,21 @@ class QuiverFile:
         ]
 
         _ExtractPipeline(entries=entries, destination=destination).run()
+        self._write_surrounding_text(destination)
+
+    def _write_surrounding_text(self, destination: Path) -> None:
+        """Write `PREAMBLE` and `EPILOGUE` files to *destination* if present.
+
+        A file is only created when the corresponding text contains at least
+        one non-whitespace character.
+
+        Args:
+            destination: Resolved extraction root directory.
+        """
+        if self._preamble and self._preamble.strip():
+            (destination / "PREAMBLE").write_text(self._preamble, encoding="utf-8")
+        if self._epilogue and self._epilogue.strip():
+            (destination / "EPILOGUE").write_text(self._epilogue, encoding="utf-8")
 
     # ------------------------------------------------------------------
     # Close / flush
@@ -704,5 +833,5 @@ class QuiverFile:
         self._closed = True
 
         if self._mode in {"w", "a"}:
-            _write_archive(self._name, self._entries)
+            _write_archive(self._name, self._entries, self._preamble, self._epilogue)
             logger.debug("Archive written", archive_name=self._name)
