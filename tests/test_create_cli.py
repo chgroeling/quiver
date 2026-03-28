@@ -196,7 +196,7 @@ def test_create_rejects_conflicting_modes(tmp_path: Path, runner: CliRunner) -> 
         ["-c", "-x", "-f", str(output_file), str(input_file)],
     )
     assert result.exit_code != 0
-    assert "cannot specify both" in result.output.lower()
+    assert "cannot" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------

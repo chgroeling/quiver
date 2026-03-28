@@ -10,7 +10,7 @@ import click
 from quiver.archive import BinaryFileError, PathTraversalError, QuiverFile
 from quiver.logging import configure_debug_logging, get_console
 
-_BUNDLABLE_FLAGS = {"c", "x", "v", "f"}
+_BUNDLABLE_FLAGS = {"a", "c", "x", "v", "f"}
 
 
 def _expand_bundled_flags(args: list[str]) -> list[str]:
@@ -70,9 +70,8 @@ class TarStyleCommand(click.Command):
 @click.command(cls=TarStyleCommand)
 @click.version_option()
 @click.option("-c", "--create", is_flag=True, help="Create a new archive from input paths.")
-@click.option(
-    "-x", "--extract", is_flag=True, help="Extract files from an archive (not yet implemented)."
-)
+@click.option("-x", "--extract", is_flag=True, help="Extract files from an archive.")
+@click.option("-a", "--add", is_flag=True, help="Add/upsert files into an existing archive.")
 @click.option(
     "-f",
     "--file",
@@ -96,6 +95,7 @@ class TarStyleCommand(click.Command):
 def main(
     create: bool,
     extract: bool,
+    add: bool,
     archive_file: str | None,
     verbose: bool,
     debug: bool,
@@ -105,20 +105,27 @@ def main(
 ) -> None:
     """Pack and unpack text files into machine-readable XML."""
 
-    _validate_mode_flags(create, extract)
+    _validate_mode_flags(create, extract, add)
     configure_debug_logging(debug)
 
     if create:
         _run_create(archive_file, verbose, inputs, preamble=preamble, epilogue=epilogue)
     elif extract:
         _run_extract(archive_file, verbose, inputs)
+    elif add:
+        _run_add(archive_file, verbose, inputs)
 
 
-def _validate_mode_flags(create: bool, extract: bool) -> None:
-    if create and extract:
-        raise click.UsageError("Cannot specify both -c/--create and -x/--extract.")
-    if not create and not extract:
-        raise click.UsageError("Specify -c/--create or -x/--extract to select an operation.")
+def _validate_mode_flags(create: bool, extract: bool, add: bool) -> None:
+    active = sum([create, extract, add])
+    if active > 1:
+        raise click.UsageError(
+            "Cannot specify more than one of -c/--create, -x/--extract, -a/--add."
+        )
+    if active == 0:
+        raise click.UsageError(
+            "Specify -c/--create, -x/--extract, or -a/--add to select an operation."
+        )
 
 
 def _run_create(
@@ -179,6 +186,39 @@ def _resolve_text_or_file(value: str | None) -> str | None:
     if candidate.is_file():
         return candidate.read_text(encoding="utf-8")
     return value
+
+
+def _run_add(
+    archive_file: str | None,
+    verbose: bool,
+    inputs: tuple[str, ...],
+) -> None:
+    if not archive_file:
+        raise click.UsageError("Option '-f/--file' is required when adding to an archive.")
+    if not inputs:
+        raise click.UsageError("Provide at least one input file or directory to add.")
+
+    console = get_console(verbose)
+    if verbose:
+        sources = ", ".join(str(Path(path)) for path in inputs)
+        console.print(f"Upserting [bold]{sources}[/bold] → [bold]{archive_file}[/bold]...")
+
+    try:
+        with QuiverFile.open(archive_file, mode="a") as qf:
+            for input_path in inputs:
+                qf.add(input_path)
+    except FileNotFoundError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    except BinaryFileError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    except OSError as exc:
+        click.echo(f"Error updating archive: {exc}", err=True)
+        sys.exit(1)
+
+    if verbose:
+        console.print("[green]Done.[/green]")
 
 
 def _run_extract(archive_file: str | None, verbose: bool, inputs: tuple[str, ...]) -> None:
