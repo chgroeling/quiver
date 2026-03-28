@@ -239,7 +239,7 @@ def test_extract_creates_both_preamble_and_epilogue(tmp_path: Path) -> None:
 
     assert (dest / "PREAMBLE").read_text(encoding="utf-8") == "BEFORE\n"
     assert (dest / "EPILOGUE").read_text(encoding="utf-8") == "\nAFTER"
-    assert (dest / "a.txt").exists()
+    assert (dest / "src" / "a.txt").exists()
 
 
 def test_extract_also_extracts_archive_files(tmp_path: Path) -> None:

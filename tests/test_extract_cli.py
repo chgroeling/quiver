@@ -14,15 +14,15 @@ if TYPE_CHECKING:
 
 def _make_archive(tmp_path: Path, files: dict[str, str]) -> Path:
     """Helper: write *files* into a temp source tree and pack into an archive."""
-    src = tmp_path / "src"
+    project = tmp_path / "project"
     for rel, content in files.items():
-        target = src / rel
+        target = project / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
 
     archive = tmp_path / "archive.xml"
     runner = CliRunner()
-    args = ["-cf", str(archive)] + [str(src)]
+    args = ["-cf", str(archive)] + [str(project)]
     result = runner.invoke(main, args)
     assert result.exit_code == 0, result.output
     return archive
@@ -63,9 +63,9 @@ def test_extract_recreates_nested_directory_structure(tmp_path: Path) -> None:
     result = runner.invoke(main, ["-xf", str(archive), str(dest)])
     assert result.exit_code == 0, result.output
 
-    assert (dest / "README.md").read_text(encoding="utf-8") == "# readme"
-    assert (dest / "src" / "main.py").read_text(encoding="utf-8") == "print('hi')"
-    assert (dest / "src" / "utils" / "helper.py").read_text(encoding="utf-8") == "pass"
+    assert (dest / "project" / "README.md").read_text(encoding="utf-8") == "# readme"
+    assert (dest / "project" / "src" / "main.py").read_text(encoding="utf-8") == "print('hi')"
+    assert (dest / "project" / "src" / "utils" / "helper.py").read_text(encoding="utf-8") == "pass"
 
 
 def test_extract_to_custom_destination(tmp_path: Path) -> None:

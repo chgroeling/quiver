@@ -84,50 +84,83 @@ def _make_new_file(tmp_path: Path, name: str, content: str) -> Path:
 
 
 def test_add_inserts_in_alphabetical_order(tmp_path: Path) -> None:
-    """New file is inserted at the correct alphabetical position, not at the end."""
-    archive = _make_archive(tmp_path, {"aaa.txt": "aaa", "zzz.txt": "zzz"})
-
-    new_dir = _make_new_file(tmp_path, "mmm.txt", "mmm")
-
-    runner = CliRunner()
-    result = runner.invoke(main, ["-af", str(archive), str(new_dir)])
+    """New entry is inserted at the correct alphabetical position by full stored path."""
+    # Initial archive: grp/aaa.txt and grp/zzz.txt.
+    grp = tmp_path / "grp"
+    grp.mkdir()
+    (grp / "aaa.txt").write_text("aaa", encoding="utf-8")
+    (grp / "zzz.txt").write_text("zzz", encoding="utf-8")
+    archive = tmp_path / "archive.xml"
+    result = CliRunner().invoke(main, ["-cf", str(archive), str(grp)])
     assert result.exit_code == 0, result.output
 
-    root = _parse_archive(archive)
-    paths = _file_paths(root)
-    assert "mmm.txt" in paths
-    mmm_idx = paths.index("mmm.txt")
-    aaa_idx = paths.index("aaa.txt")
-    zzz_idx = paths.index("zzz.txt")
-    assert aaa_idx < mmm_idx < zzz_idx, f"Expected aaa < mmm < zzz, got indices {paths}"
+    # Add grp/mmm.txt using a second dir with the same name in a sub-tmp location.
+    # Since both dirs are named 'grp', stored paths share the prefix and sort as:
+    # grp/aaa.txt < grp/mmm.txt < grp/zzz.txt.
+    grp2 = tmp_path / "add" / "grp"
+    grp2.mkdir(parents=True)
+    (grp2 / "mmm.txt").write_text("mmm", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["-af", str(archive), str(grp2)])
+    assert result.exit_code == 0, result.output
+
+    paths = _file_paths(_parse_archive(archive))
+    assert "grp/mmm.txt" in paths
+    assert "grp/aaa.txt" in paths
+    assert "grp/zzz.txt" in paths
+    aaa_idx = paths.index("grp/aaa.txt")
+    mmm_idx = paths.index("grp/mmm.txt")
+    zzz_idx = paths.index("grp/zzz.txt")
+    assert aaa_idx < mmm_idx < zzz_idx, f"Expected aaa < mmm < zzz, got paths {paths}"
 
 
 def test_add_inserts_at_beginning(tmp_path: Path) -> None:
-    """New file that sorts first is placed before all existing entries."""
-    archive = _make_archive(tmp_path, {"mmm.txt": "mmm", "zzz.txt": "zzz"})
+    """New entry that sorts first by full path is placed before all existing entries."""
+    # Initial archive: grp/mmm.txt, grp/zzz.txt.
+    grp = tmp_path / "grp"
+    grp.mkdir()
+    (grp / "mmm.txt").write_text("mmm", encoding="utf-8")
+    (grp / "zzz.txt").write_text("zzz", encoding="utf-8")
+    archive = tmp_path / "archive.xml"
+    result = CliRunner().invoke(main, ["-cf", str(archive), str(grp)])
+    assert result.exit_code == 0, result.output
 
-    new_dir = _make_new_file(tmp_path, "aaa.txt", "aaa")
+    # grp/aaa.txt sorts before grp/mmm.txt.
+    grp2 = tmp_path / "add" / "grp"
+    grp2.mkdir(parents=True)
+    (grp2 / "aaa.txt").write_text("aaa", encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(main, ["-af", str(archive), str(new_dir)])
+    result = runner.invoke(main, ["-af", str(archive), str(grp2)])
     assert result.exit_code == 0, result.output
 
     paths = _file_paths(_parse_archive(archive))
-    assert paths[0] == "aaa.txt"
+    assert paths[0] == "grp/aaa.txt", f"Expected first path grp/aaa.txt, got {paths}"
 
 
 def test_add_inserts_at_end(tmp_path: Path) -> None:
-    """New file that sorts last is appended after all existing entries."""
-    archive = _make_archive(tmp_path, {"aaa.txt": "aaa", "mmm.txt": "mmm"})
+    """New entry that sorts last by full path is appended after all existing entries."""
+    # Initial archive: grp/aaa.txt, grp/mmm.txt.
+    grp = tmp_path / "grp"
+    grp.mkdir()
+    (grp / "aaa.txt").write_text("aaa", encoding="utf-8")
+    (grp / "mmm.txt").write_text("mmm", encoding="utf-8")
+    archive = tmp_path / "archive.xml"
+    result = CliRunner().invoke(main, ["-cf", str(archive), str(grp)])
+    assert result.exit_code == 0, result.output
 
-    new_dir = _make_new_file(tmp_path, "zzz.txt", "zzz")
+    # grp/zzz.txt sorts after grp/mmm.txt.
+    grp2 = tmp_path / "add" / "grp"
+    grp2.mkdir(parents=True)
+    (grp2 / "zzz.txt").write_text("zzz", encoding="utf-8")
 
     runner = CliRunner()
-    result = runner.invoke(main, ["-af", str(archive), str(new_dir)])
+    result = runner.invoke(main, ["-af", str(archive), str(grp2)])
     assert result.exit_code == 0, result.output
 
     paths = _file_paths(_parse_archive(archive))
-    assert paths[-1] == "zzz.txt"
+    assert paths[-1] == "grp/zzz.txt", f"Expected last path grp/zzz.txt, got {paths}"
 
 
 # ---------------------------------------------------------------------------
@@ -138,9 +171,10 @@ def test_add_inserts_at_end(tmp_path: Path) -> None:
 def test_add_upserts_existing_file(tmp_path: Path) -> None:
     """Adding a file whose path already exists in the archive replaces its content."""
     archive = _make_archive(tmp_path, {"hello.txt": "original content"})
-    # _make_archive stores the file as "src/hello.txt" — replicate with same layout.
-    update_src = tmp_path / "update_src"
-    update_src.mkdir()
+    # _make_archive packs a src/ directory, so the stored path is "src/hello.txt".
+    # Replicate the same directory name so the path matches and an upsert happens.
+    update_src = tmp_path / "src"
+    update_src.mkdir(exist_ok=True)
     (update_src / "hello.txt").write_text("updated content", encoding="utf-8")
 
     runner = CliRunner()
@@ -158,9 +192,9 @@ def test_add_upsert_does_not_duplicate_entry(tmp_path: Path) -> None:
     archive = _make_archive(tmp_path, {"a.txt": "A", "b.txt": "B"})
     original_count = len(_file_paths(_parse_archive(archive)))
 
-    # Update a.txt using the same src/ directory layout so the stored path matches.
-    update_src = tmp_path / "update_src"
-    update_src.mkdir()
+    # _make_archive stores files under src/, so use the same dir name to match.
+    update_src = tmp_path / "src"
+    update_src.mkdir(exist_ok=True)
     (update_src / "a.txt").write_text("A-new", encoding="utf-8")
 
     runner = CliRunner()
@@ -193,8 +227,9 @@ def test_add_regenerates_directory_tree(tmp_path: Path) -> None:
 def test_add_directory_tree_reflects_upserted_path(tmp_path: Path) -> None:
     """After upserting, the <directory_tree> is consistent with the <file> list."""
     archive = _make_archive(tmp_path, {"a.txt": "A", "b.txt": "B"})
-    update_src = tmp_path / "update_src"
-    update_src.mkdir()
+    # Use the same dir name as _make_archive (src/) so the path matches for an upsert.
+    update_src = tmp_path / "src"
+    update_src.mkdir(exist_ok=True)
     (update_src / "b.txt").write_text("B-updated", encoding="utf-8")
 
     runner = CliRunner()

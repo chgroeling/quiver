@@ -10,7 +10,7 @@ Instead, this feature implements an "Upsert" (Update or Insert) logic using a **
 ### 2.1. CLI & Input
 * **Command:** `quiver -a <input_folder_or_file> -f <existing_archive.xml>`
 * **Aliases:** `--add` for `-a`.
-* **Behavior (Upsert):** If a file from the input already exists in the archive (exact path match), its content in the archive is replaced. If it does not exist, it is inserted at the correct alphabetical position.
+* **Behavior (Upsert):** If a file from the input already exists in the archive (exact **full path** match, including the directory name prefix), its content in the archive is replaced. If it does not exist, it is inserted at the correct alphabetical position. Full paths are used for all comparisons — `mydir/foo.txt` and `otherdir/foo.txt` are treated as distinct entries.
 * **Flags:** Respond to `--verbose` (`rich`) and `--debug` (`structlog`).
 
 ### 2.2. Core Logic: The Stream & Merge Process

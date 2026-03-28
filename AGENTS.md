@@ -134,7 +134,7 @@ The public API follows the `tarfile` pattern. Entry point: `quiver.open()` in `_
 - Factory: `QuiverFile.open(name, mode, preamble=None, epilogue=None)` or `quiver.open(name, mode, preamble=None, epilogue=None)`
 - Modes: `'r'` (read), `'w'` (write), `'a'` (append)
 - Context manager: calls `close()` on `__exit__`
-- `add(name, arcname=None)` — accepts file or directory input; validates UTF-8 encoding **and** XML-1.0 character compatibility (via `_validate_xml_compatible`), normalizes POSIX paths, stores entries
+- `add(name, arcname=None)` — accepts file or directory input; validates UTF-8 encoding **and** XML-1.0 character compatibility (via `_validate_xml_compatible`), normalizes POSIX paths, stores entries. When packing a **directory**, the directory's own name is preserved as a path prefix (matching `tar` semantics — e.g. `add("mydir")` stores `mydir/file.txt`, not `file.txt`). Supply `arcname` to override the prefix.
 - Directory packing uses an internal async reader/writer flow with bounded queue backpressure and a single writer task
 - `close()` — in `'w'` mode: sorts entries, builds lxml XML tree, writes to disk (creates or overwrites). In `'a'` mode: delegates to `_UpsertPipeline` for streaming merge. In both modes: **skipped entirely** (archive untouched) when `close()` is reached via `__exit__` with a propagating exception.
 - `getnames()` / `getmembers()` — return names / `QuiverInfo` objects; works in both read and write mode

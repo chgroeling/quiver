@@ -68,7 +68,7 @@ def test_create_directory_recursively(tmp_path: Path, runner: CliRunner) -> None
 
     root = etree.fromstring(output.read_text(encoding="utf-8").encode())
     paths = [el.get("path") for el in root.findall("file")]
-    assert paths == ["README.md", "src/main.py"]
+    assert paths == ["project/README.md", "project/src/main.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ def test_create_accepts_multiple_inputs(tmp_path: Path, runner: CliRunner) -> No
 
     root = etree.fromstring(output.read_text(encoding="utf-8").encode())
     names = sorted(Path(el.get("path", "")).name for el in root.findall("file"))
-    assert names == ["README.md", "main.py"]
+    assert names == ["README.md", "main.py"]  # .name strips directory prefix; still correct
 
 
 def test_create_silent_by_default(tmp_path: Path, runner: CliRunner) -> None:

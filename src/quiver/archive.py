@@ -935,7 +935,17 @@ class QuiverFile:
             raise FileNotFoundError(f"No such file: {name!r}")
 
         if file_path.is_dir():
-            entries = _PackPipeline(root_dir=file_path, arcname=arcname).run()
+            # When no arcname override is given, default to the directory's own
+            # name so that the stored paths include it as a prefix — matching
+            # tar semantics (e.g. `tar -cf a.tar mydir` stores `mydir/file`).
+            # Handle the edge case where the name would be empty (e.g. Path(".")
+            # or Path("/")) by falling back to the resolved directory name.
+            if arcname is None:
+                dir_name = file_path.name or file_path.resolve().name
+                effective_arcname = dir_name if dir_name else None
+            else:
+                effective_arcname = arcname
+            entries = _PackPipeline(root_dir=file_path, arcname=effective_arcname).run()
             self._entries.extend(entries)
             return
 

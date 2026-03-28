@@ -283,7 +283,7 @@ def test_add_directory_recursively_packs_files(tmp_path: Path) -> None:
 
     root = etree.fromstring(output.read_text(encoding="utf-8").encode())
     paths = [elem.get("path") for elem in root.findall("file")]
-    assert paths == ["docs/readme.md", "src/main.py", "src/utils.py"]
+    assert paths == ["project/docs/readme.md", "project/src/main.py", "project/src/utils.py"]
 
 
 def test_add_directory_binary_file_raises(tmp_path: Path) -> None:
@@ -399,8 +399,8 @@ def test_extractall_recreates_files(tmp_path: Path) -> None:
     with QuiverFile.open(str(archive), mode="r") as qf:
         qf.extractall(path=str(dest))
 
-    assert (dest / "a.txt").read_text(encoding="utf-8") == "alpha"
-    assert (dest / "sub" / "b.txt").read_text(encoding="utf-8") == "beta"
+    assert (dest / "src" / "a.txt").read_text(encoding="utf-8") == "alpha"
+    assert (dest / "src" / "sub" / "b.txt").read_text(encoding="utf-8") == "beta"
 
 
 def test_extractall_creates_intermediate_dirs(tmp_path: Path) -> None:
@@ -418,7 +418,7 @@ def test_extractall_creates_intermediate_dirs(tmp_path: Path) -> None:
     with QuiverFile.open(str(archive), mode="r") as qf:
         qf.extractall(path=str(dest))
 
-    assert (dest / "x" / "y" / "z" / "deep.txt").read_text(encoding="utf-8") == "deep"
+    assert (dest / "src" / "x" / "y" / "z" / "deep.txt").read_text(encoding="utf-8") == "deep"
 
 
 def test_extractall_defaults_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -456,8 +456,8 @@ def test_extractall_with_members_filter(tmp_path: Path) -> None:
         members = [m for m in qf.getmembers() if m.name.endswith("keep.txt")]
         qf.extractall(path=str(dest), members=members)
 
-    assert (dest / "keep.txt").exists()
-    assert not (dest / "skip.txt").exists()
+    assert (dest / "src" / "keep.txt").exists()
+    assert not (dest / "src" / "skip.txt").exists()
 
 
 def test_extractall_in_write_mode_raises(tmp_path: Path) -> None:
