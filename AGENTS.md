@@ -137,9 +137,9 @@ The public API follows the `tarfile` pattern. Entry point: `quiver.open()` in `_
 - Factory: `QuiverFile.open(name, mode, preamble=None, epilogue=None)` or `quiver.open(name, mode, preamble=None, epilogue=None)`
 - Modes: `'r'` (read), `'w'` (write), `'a'` (append)
 - Context manager: calls `close()` on `__exit__`
-- `add(name, arcname=None)` — accepts file or directory input; validates UTF-8 encoding **and** XML-1.0 character compatibility (via `_validate_xml_compatible`), normalizes POSIX paths, stores entries. When packing a **directory**, the directory's own name is preserved as a path prefix (matching `tar` semantics — e.g. `add("mydir")` stores `mydir/file.txt`, not `file.txt`). Supply `arcname` to override the prefix.
+- `add(name, arcname=None)` — accepts file or directory input; validates UTF-8 encoding **and** XML-1.0 character compatibility (via `_validate_xml_compatible`), normalizes POSIX paths, upserts entries into `self._entries` (replaces existing entry with same stored path, or appends). When packing a **directory**, the directory's own name is preserved as a path prefix (matching `tar` semantics — e.g. `add("mydir")` stores `mydir/file.txt`, not `file.txt`). Supply `arcname` to override the prefix.
 - Directory packing uses an internal async reader/writer flow with bounded queue backpressure and a single writer task
-- `close()` — in `'w'` mode: sorts entries, builds lxml XML tree, writes to disk (creates or overwrites). In `'a'` mode: delegates to `_UpsertPipeline` for streaming merge. In both modes: **skipped entirely** (archive untouched) when `close()` is reached via `__exit__` with a propagating exception.
+- `close()` — in both `'w'` and `'a'` modes: sorts entries, builds lxml XML tree, writes to disk via `_write_archive` (creates or overwrites). **Skipped entirely** (archive untouched) when `close()` is reached via `__exit__` with a propagating exception.
 - `getnames()` / `getmembers()` — return names / `QuiverInfo` objects; works in both read and write mode
 - `extractall(path=".", members=None)` — extracts all (or selected) members to *path* using an async pipeline; validates every path against the destination sandbox before writing; writes `PREAMBLE` and `EPILOGUE` files to *path* when the archive contains non-whitespace surrounding text
 
@@ -162,7 +162,7 @@ Command style mirrors `tar`:
 
 - **Create**: `quiver -cf <archive.xml> <input_path...>` bundles short flags; `-f` must be last in a bundle.
 - **Extract**: `quiver -xf <archive.xml> [destination]` extracts to `destination` (default: `.`).
-- **Add/Upsert**: `quiver -af <archive.xml> <input_path...>` upserts files into an existing archive (insert new, replace existing, preserve alphabetical order).
+- **Add/Upsert**: `quiver -af <archive.xml> <input_path...>` upserts files into an existing archive (insert new, replace existing, preserve alphabetical order). If the archive does not yet exist, it is created from scratch.
 - **Verbose**: include `-v` (e.g., `quiver -cvf archive.xml src docs`).
 - **Debug logging**: `--debug` (no short form).
 - **Preamble**: `--preamble <text_or_filepath>` — prepends text before the XML. If the argument is an existing file path, its contents are used; otherwise treated as a raw string.
@@ -194,7 +194,6 @@ Command style mirrors `tar`:
 | `QuiverFile.add`                  | `entry_path=`, `size=`   |
 | `QuiverFile.close`                | `archive_name=`          |
 | `_ExtractPipeline._writer_worker` | `entry_path=`, `size=`   |
-| `_UpsertPipeline._run_async`      | `archive_name=`          |
 
 # Architecture & Mechanisms
 - **CLI:** Single Click command; emulates tar-style bundled short flags (`-cvf`) via custom pre-processing expansion.
@@ -206,9 +205,9 @@ Command style mirrors `tar`:
   1. `_decode_utf8()` — rejects non-UTF-8 bytes → `BinaryFileError`.
   2. `_validate_xml_compatible()` — rejects XML-1.0-forbidden characters (matched by `_XML_FORBIDDEN_RE`: `[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]`) → `BinaryFileError` with line/col/hex location info (up to `_MAX_REPORTED_OFFENCES = 5` occurrences). This prevents a late crash inside `lxml.etree.CDATA()` at serialization time with no useful context.
 - **Extraction Pipeline (`_ExtractPipeline`, Layer 3.5):** Mirrors `_PackPipeline`. Feeds `(stored_path, content)` pairs through a bounded `asyncio.Queue`; concurrent worker tasks validate, create parent dirs via `asyncio.to_thread`, and write files with `aiofile`. XML parsing uses `lxml.etree.fromstring` on the isolated XML block (not the full file).
-- **Upsert Pipeline (`_UpsertPipeline`, Layer 3.7):** Implements OOM-safe stream-merge for `mode='a'`. Performs two sequential `lxml.iterparse` passes over `io.BytesIO(xml_bytes)` (never loads the full XML into RAM): **Pass 1** collects existing `path` attributes (calling `element.clear()` after each) to regenerate `<directory_tree>` from the merged path set; **Pass 2** streams `<file>` elements and merge-inserts/upserts/copies against the sorted new-entry list, writing each element via `aiofile` to `archive.xml.tmp`. Finalizes with `</archive>` + epilogue, then calls `asyncio.to_thread(Path(tmp).replace, archive_path)` for an atomic swap. On any error the `.tmp` file is removed with `contextlib.suppress(FileNotFoundError)` and the original is never touched.
-- **`__exit__` exception-propagation rule:** `QuiverFile.__exit__` checks `exc_type is not None` and, if so, sets `self._closed = True` without calling `close()`. This guarantees that a failed `add()` call inside a `with` block never triggers a write/upsert that would corrupt or silently truncate the archive. This is the same contract as `tarfile.TarFile`.
-- **Read mode (`QuiverFile.__init__`):** Opening in `'r'` immediately parses the archive via `_parse_archive()` and populates `self._entries`, `self._preamble`, and `self._epilogue`; raises `FileNotFoundError` if the file does not exist.
+- **`__exit__` exception-propagation rule:** `QuiverFile.__exit__` checks `exc_type is not None` and, if so, sets `self._closed = True` without calling `close()`. This guarantees that a failed `add()` call inside a `with` block never triggers a write that would corrupt or silently truncate the archive. This is the same contract as `tarfile.TarFile`.
+- **Read/append mode (`QuiverFile.__init__`):** Opening in `'r'` immediately parses the archive via `_parse_archive()` and populates `self._entries`, `self._preamble`, and `self._epilogue`; raises `FileNotFoundError` if the file does not exist. Opening in `'a'` does the same when the file exists; starts with empty `self._entries` when it does not (creating a new archive on `close()`).
+- **Upsert semantics (mode `'a'`):** There is no separate upsert pipeline. `_parse_archive()` pre-loads the existing entries into `self._entries` on open. Each `add()` call performs an in-place replace when the stored path already exists, or appends otherwise. `close()` calls `_write_archive()` identically to `'w'` mode. This works because all file content must be in RAM anyway to serve `getnames()`, `getmembers()`, and `extractall()` — a streaming merge would save zero memory. **Avoid re-introducing a separate upsert pipeline;** the complexity is not justified.
 - **Embedded archive (preamble/epilogue):** The archive file may contain arbitrary plain text before and after the `<archive>` block. `_split_archive_text()` locates the **first** `<archive ...>` and first `</archive>` to isolate the XML; everything outside is preamble/epilogue. The **first-match rule** means any subsequent `<archive>` blocks are treated as pure epilogue text, never parsed as XML.
 - **XML Specs:** File content must use unescaped `<![CDATA[ ... ]]>` blocks; no entity encoding for bodies.
   - `<directory_tree>` is always the **first child** of `<archive>`, placed before all `<file>` elements.
