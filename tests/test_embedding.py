@@ -40,7 +40,9 @@ def test_epilogue_absent_when_none_given(tmp_path: Path) -> None:
 def test_preamble_and_epilogue_round_trip(tmp_path: Path) -> None:
     """Preamble and epilogue supplied at write time survive a full round-trip."""
     archive = tmp_path / "archive.xml"
-    with QuiverFile.open(str(archive), mode="w", preamble="Before text", epilogue="After text") as qf:
+    with QuiverFile.open(
+        str(archive), mode="w", preamble="Before text", epilogue="After text"
+    ) as qf:
         qf.add_text("a.txt", "hi")
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.preamble == "Before text"

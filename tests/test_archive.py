@@ -763,7 +763,9 @@ def test_xml_structure_validated_by_lxml(tmp_path: Path) -> None:
     assert any(k is not None and k.endswith("README.md") for k in content_map)
     readme_key = next(k for k in content_map if k is not None and k.endswith("README.md"))
     assert content_map[readme_key] == "# Project"
-    main_key = next(k for k in content_map if k is not None and k.endswith("main.py") and "sub" not in k)
+    main_key = next(
+        k for k in content_map if k is not None and k.endswith("main.py") and "sub" not in k
+    )
     assert content_map[main_key] == "print('hello')"
     helper_key = next(k for k in content_map if k is not None and k.endswith("helper.py"))
     assert content_map[helper_key] == "def helper(): pass"
@@ -912,9 +914,7 @@ def test_add_text_raises_after_close(tmp_path: Path) -> None:
 def test_add_text_rejects_absolute_arcname(tmp_path: Path) -> None:
     """add_text() raises PathTraversalError when arcname is an absolute path."""
     archive = tmp_path / "archive.xml"
-    with QuiverFile.open(str(archive), mode="w") as qf, pytest.raises(
-        Exception, match="absolute"
-    ):
+    with QuiverFile.open(str(archive), mode="w") as qf, pytest.raises(Exception, match="absolute"):
         qf.add_text("/etc/passwd", "evil")
 
 
@@ -928,7 +928,8 @@ def test_add_text_rejects_dotdot_arcname(tmp_path: Path) -> None:
 def test_add_text_rejects_xml_incompatible_content(tmp_path: Path) -> None:
     """add_text() raises BinaryFileError when content contains XML-forbidden control chars."""
     archive = tmp_path / "archive.xml"
-    with QuiverFile.open(str(archive), mode="w") as qf, pytest.raises(
-        BinaryFileError, match=r"\\x00"
+    with (
+        QuiverFile.open(str(archive), mode="w") as qf,
+        pytest.raises(BinaryFileError, match=r"\\x00"),
     ):
         qf.add_text("notes.txt", "hello\x00world")

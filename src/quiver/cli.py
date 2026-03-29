@@ -6,12 +6,16 @@ import contextlib
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import click
+import structlog
 
 from quiver.archive import BinaryFileError, PathTraversalError, QuiverFile, _normalize_stored_path
 from quiver.logging import configure_debug_logging, get_console
+
+logger = structlog.get_logger(__name__)
 
 _BUNDLABLE_FLAGS = {"a", "c", "x", "v", "f"}
 
@@ -261,10 +265,12 @@ def _run_delete(
 
     try:
         with QuiverFile.open(archive_file, mode="r") as src:
-            filtered = [(info, content) for info, content in src.entries if _keep(info.name)]
+            all_entries = src.entries
+            filtered = [(info, content) for info, content in all_entries if _keep(info.name)]
             preamble = src.preamble
             epilogue = src.epilogue
 
+        t0 = time.perf_counter()
         # Write to a sibling temp file then atomically replace the original.
         tmp_fd, tmp_name = tempfile.mkstemp(
             dir=archive_path.parent, prefix=".quiver-", suffix=".tmp"
@@ -279,6 +285,13 @@ def _run_delete(
             with contextlib.suppress(OSError):
                 Path(tmp_name).unlink()
             raise
+        kept_count = len(filtered)
+        logger.debug(
+            "Delete repack completed",
+            elapsed_s=round(time.perf_counter() - t0, 4),
+            deleted_count=len(all_entries) - kept_count,
+            kept_count=kept_count,
+        )
     except FileNotFoundError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)

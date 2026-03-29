@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, cast
 
@@ -302,12 +303,12 @@ type _ParseResult = tuple[list[tuple[str, str]], str, str]
 # Matches a single <file path="...">…</file> block.  The content CDATA is
 # captured lazily (re.DOTALL) so that multiple entries do not bleed together.
 _FILE_ENTRY_RE = re.compile(
-    r'<file\s+path="([^"]*)">'         # group 1 — stored path attribute
-    r"\s*<content>"                     # opening <content> tag
-    r"(?:<!\[CDATA\[(.*?)\]\]>|"       # group 2 — CDATA block (may be absent)
-    r"([^<]*))"                          # group 3 — plain text (empty element)
-    r"\s*</content>"                    # closing </content> tag
-    r"\s*</file>",                      # closing </file> tag
+    r'<file\s+path="([^"]*)">'  # group 1 — stored path attribute
+    r"\s*<content>"  # opening <content> tag
+    r"(?:<!\[CDATA\[(.*?)\]\]>|"  # group 2 — CDATA block (may be absent)
+    r"([^<]*))"  # group 3 — plain text (empty element)
+    r"\s*</content>"  # closing </content> tag
+    r"\s*</file>",  # closing </file> tag
     re.DOTALL,
 )
 
@@ -379,7 +380,16 @@ class _PackPipeline:
 
     def run(self) -> list[tuple[QuiverInfo, str]]:
         """Execute the pipeline synchronously and return collected entries."""
+        t0 = time.perf_counter()
         asyncio.run(self._run_async())
+        elapsed = time.perf_counter() - t0
+        total_bytes = sum(info.size for info, _ in self._results)
+        logger.debug(
+            "Pack pipeline completed",
+            elapsed_s=round(elapsed, 4),
+            file_count=len(self._results),
+            total_bytes=total_bytes,
+        )
         return self._results
 
     async def _run_async(self) -> None:
@@ -472,7 +482,16 @@ class _ExtractPipeline:
 
     def run(self) -> None:
         """Execute the pipeline synchronously."""
+        t0 = time.perf_counter()
         asyncio.run(self._run_async())
+        elapsed = time.perf_counter() - t0
+        total_bytes = sum(len(c.encode("utf-8")) for _, c in self._entries)
+        logger.debug(
+            "Extract pipeline completed",
+            elapsed_s=round(elapsed, 4),
+            file_count=len(self._entries),
+            total_bytes=total_bytes,
+        )
 
     async def _run_async(self) -> None:
         """Feed entries into a bounded queue and run concurrent writer workers."""
@@ -689,6 +708,7 @@ class QuiverFile:
             archive_path = Path(name)
             if not archive_path.exists():
                 raise FileNotFoundError(f"Archive not found: {name!r}")
+            t0 = time.perf_counter()
             raw_entries, parsed_preamble, parsed_epilogue = _parse_archive(name)
             self._preamble = parsed_preamble if parsed_preamble.strip() else None
             self._epilogue = parsed_epilogue if parsed_epilogue.strip() else None
@@ -696,7 +716,14 @@ class QuiverFile:
                 (QuiverInfo(name=stored_path, size=len(content.encode("utf-8"))), content)
                 for stored_path, content in raw_entries
             ]
+            logger.debug(
+                "Archive parsed",
+                archive_name=name,
+                elapsed_s=round(time.perf_counter() - t0, 4),
+                entry_count=len(raw_entries),
+            )
         elif mode == "a" and Path(name).exists():
+            t0 = time.perf_counter()
             raw_entries, parsed_preamble, parsed_epilogue = _parse_archive(name)
             self._preamble = parsed_preamble if parsed_preamble.strip() else None
             self._epilogue = parsed_epilogue if parsed_epilogue.strip() else None
@@ -704,6 +731,12 @@ class QuiverFile:
                 (QuiverInfo(name=stored_path, size=len(content.encode("utf-8"))), content)
                 for stored_path, content in raw_entries
             ]
+            logger.debug(
+                "Archive parsed",
+                archive_name=name,
+                elapsed_s=round(time.perf_counter() - t0, 4),
+                entry_count=len(raw_entries),
+            )
 
     # ------------------------------------------------------------------
     # Factory
@@ -969,5 +1002,11 @@ class QuiverFile:
         self._closed = True
 
         if self._mode in {"w", "a"}:
+            t0 = time.perf_counter()
             _write_archive(self._name, self._entries, self._preamble, self._epilogue)
-            logger.debug("Archive written", archive_name=self._name)
+            logger.debug(
+                "Archive written",
+                archive_name=self._name,
+                elapsed_s=round(time.perf_counter() - t0, 4),
+                entry_count=len(self._entries),
+            )

@@ -158,13 +158,17 @@ Style: `tar` (e.g., `quiver -cvf archive.xml src`)
 - **Init**: Use `structlog.get_logger(__name__)`. **Never** `logging.getLogger()`.
 - **Context**: Use kwargs: `logger.debug("msg", k=v)`. **Never** `extra={...}` (crashes on reserved keys like `name`).
 
-### Established log fields in `archive.py`
-| Call site                         | Fields                   |
-| --------------------------------- | ------------------------ |
-| `QuiverFile.__init__`             | `archive_name=`, `mode=` |
-| `QuiverFile.add`                  | `entry_path=`, `size=`   |
-| `QuiverFile.close`                | `archive_name=`          |
-| `_ExtractPipeline._writer_worker` | `entry_path=`, `size=`   |
+### Established log fields in `archive.py` and `cli.py`
+| Call site                         | Fields                                        |
+| --------------------------------- | --------------------------------------------- |
+| `QuiverFile.__init__`             | `archive_name=`, `mode=`                      |
+| `QuiverFile.__init__` (parse)     | `archive_name=`, `elapsed_s=`, `entry_count=` |
+| `QuiverFile.add`                  | `entry_path=`, `size=`                        |
+| `QuiverFile.close`                | `archive_name=`, `elapsed_s=`, `entry_count=` |
+| `_PackPipeline.run`               | `elapsed_s=`, `file_count=`, `total_bytes=`   |
+| `_ExtractPipeline.run`            | `elapsed_s=`, `file_count=`, `total_bytes=`   |
+| `_ExtractPipeline._writer_worker` | `entry_path=`, `size=`                        |
+| `_run_delete` (cli.py)            | `elapsed_s=`, `deleted_count=`, `kept_count=` |
 
 ## Architecture & Mechanisms
 - **CLI:** Tar-style bundled flags (`-cvf`) via custom pre-processing.
