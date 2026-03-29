@@ -107,6 +107,11 @@ Public API mirrors `tarfile`. Entry: `quiver.open()`.
   - Normalizes POSIX paths; upserts `self._entries`.
   - Preserves dir name as prefix (e.g., `add("dir")` -> `dir/file.txt`) unless `arcname` provided.
   - Uses async reader/writer with bounded backpressure.
+- **`delete(target_path)`**:
+  - Requires mode `'a'`.
+  - Removes all entries whose stored path equals `target_path` exactly or starts with `target_path + "/"` (directory prefix).
+  - No-op (no error) when `target_path` is not found.
+  - Tree regeneration and preamble/epilogue preservation are automatic on `close()`.
 - **`close()`**: Sorts entries, builds `lxml` tree, writes to disk. **Aborts** if `__exit__` has propagating exception.
 - **`getnames()` / `getmembers()`**: Returns names or `QuiverInfo` objects.
 - **`extractall(path=".", members=None)`**:
@@ -131,6 +136,7 @@ Style: `tar` (e.g., `quiver -cvf archive.xml src`)
 - **-c (Create)**: `quiver -cf <archive.xml> <path...>`
 - **-x (Extract)**: `quiver -xf <archive.xml> [dest]` (default: `.`)
 - **-a (Add/Upsert)**: `quiver -af <archive.xml> <path...>` New/replace; maintains alpha-order. Creates if missing.
+- **--delete (Delete)**: `quiver --delete -f <archive.xml> <path...>` Remove files or directory prefixes; no-op if not found. No short flag.
 - **-v (Verbose)**: Enables stdout.
 - **--debug**: Detailed logging (no short flag).
 - **--preamble <txt|file>**: Prepend string or file content before XML.
@@ -138,7 +144,7 @@ Style: `tar` (e.g., `quiver -cvf archive.xml src`)
 
 **Rules:**
 - Flags: `-f` must end short-flag bundles.
-- Validation: Exactly one mode (`-c`, `-x`, `-a`) required; mutually exclusive.
+- Validation: Exactly one mode (`-c`, `-x`, `-a`, `--delete`) required; mutually exclusive.
 - Recursion: Recursive packing for `-c`/`-a`.
 - Output: Silent by default unless `-v` or `--debug`.
 

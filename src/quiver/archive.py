@@ -783,6 +783,41 @@ class QuiverFile:
         self._entries.append((info, content))
         logger.debug("Added file", entry_path=stored_path, size=info.size)
 
+    def delete(self, target_path: str) -> None:
+        """Remove entries matching *target_path* from the archive.
+
+        Accepts an exact file path or a directory prefix. When a directory
+        prefix is given, all entries whose stored path starts with
+        ``target_path + "/"`` are removed.  If *target_path* does not match
+        any entry, the archive is left unchanged (no-op; no error is raised).
+
+        Args:
+            target_path: POSIX path to delete — either an exact file path
+                (e.g. ``"src/main.py"``) or a directory prefix
+                (e.g. ``"src/utils"`` removes all ``src/utils/…`` entries).
+
+        Raises:
+            ValueError: If the archive is not open in append mode, or if it
+                has already been closed.
+        """
+        if self._mode != "a":
+            raise ValueError(
+                f"Cannot delete entries in mode {self._mode!r}. Open the archive with mode 'a'."
+            )
+        if self._closed:
+            raise ValueError("Cannot delete entries from a closed archive.")
+
+        normalized = _normalize_stored_path(target_path)
+        dir_prefix = normalized.rstrip("/") + "/"
+        before = len(self._entries)
+        self._entries = [
+            (info, content)
+            for info, content in self._entries
+            if info.name != normalized and not info.name.startswith(dir_prefix)
+        ]
+        removed = before - len(self._entries)
+        logger.debug("Deleted entries", deleted_path=normalized, removed_count=removed)
+
     # ------------------------------------------------------------------
     # Read API
     # ------------------------------------------------------------------

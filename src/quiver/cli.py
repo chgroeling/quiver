@@ -73,6 +73,9 @@ class TarStyleCommand(click.Command):
 @click.option("-x", "--extract", is_flag=True, help="Extract files from an archive.")
 @click.option("-a", "--add", is_flag=True, help="Add/upsert files into an existing archive.")
 @click.option(
+    "--delete", is_flag=True, help="Delete files or directories from an existing archive."
+)
+@click.option(
     "-f",
     "--file",
     "archive_file",
@@ -96,6 +99,7 @@ def main(
     create: bool,
     extract: bool,
     add: bool,
+    delete: bool,
     archive_file: str | None,
     verbose: bool,
     debug: bool,
@@ -105,7 +109,7 @@ def main(
 ) -> None:
     """Pack and unpack text files into machine-readable XML."""
 
-    _validate_mode_flags(create, extract, add)
+    _validate_mode_flags(create, extract, add, delete)
     configure_debug_logging(debug)
 
     if create:
@@ -114,17 +118,19 @@ def main(
         _run_extract(archive_file, verbose, inputs)
     elif add:
         _run_add(archive_file, verbose, inputs)
+    elif delete:
+        _run_delete(archive_file, verbose, inputs)
 
 
-def _validate_mode_flags(create: bool, extract: bool, add: bool) -> None:
-    active = sum([create, extract, add])
+def _validate_mode_flags(create: bool, extract: bool, add: bool, delete: bool) -> None:
+    active = sum([create, extract, add, delete])
     if active > 1:
         raise click.UsageError(
-            "Cannot specify more than one of -c/--create, -x/--extract, -a/--add."
+            "Cannot specify more than one of -c/--create, -x/--extract, -a/--add, --delete."
         )
     if active == 0:
         raise click.UsageError(
-            "Specify -c/--create, -x/--extract, or -a/--add to select an operation."
+            "Specify -c/--create, -x/--extract, -a/--add, or --delete to select an operation."
         )
 
 
@@ -211,6 +217,40 @@ def _run_add(
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
     except BinaryFileError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    except OSError as exc:
+        click.echo(f"Error updating archive: {exc}", err=True)
+        sys.exit(1)
+
+    if verbose:
+        console.print("[green]Done.[/green]")
+
+
+def _run_delete(
+    archive_file: str | None,
+    verbose: bool,
+    inputs: tuple[str, ...],
+) -> None:
+    if not archive_file:
+        raise click.UsageError("Option '-f/--file' is required when deleting from an archive.")
+    if not inputs:
+        raise click.UsageError("Provide at least one path to delete from the archive.")
+
+    console = get_console(verbose)
+    if verbose:
+        targets = ", ".join(inputs)
+        console.print(f"Deleting [bold]{targets}[/bold] from [bold]{archive_file}[/bold]...")
+
+    if not Path(archive_file).exists():
+        click.echo(f"Error: Archive not found: {archive_file!r}", err=True)
+        sys.exit(1)
+
+    try:
+        with QuiverFile.open(archive_file, mode="a") as qf:
+            for target in inputs:
+                qf.delete(target)
+    except FileNotFoundError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
     except OSError as exc:

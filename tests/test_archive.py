@@ -673,3 +673,115 @@ def test_directory_tree_empty_archive() -> None:
     assert tree_elem is not None
     assert tree_elem.text is not None
     assert tree_elem.text.strip() == "."
+
+
+# ---------------------------------------------------------------------------
+# QuiverFile.delete()
+# ---------------------------------------------------------------------------
+
+
+def _make_archive_and_parse(tmp_path: Path, files: dict[str, str]) -> Path:
+    """Create a 'w'-mode archive with *files* and return its path."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        for rel, content in files.items():
+            f = tmp_path / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(content, encoding="utf-8")
+            qf.add(str(f), arcname=rel)
+    return archive
+
+
+def test_delete_single_entry(tmp_path: Path) -> None:
+    """delete() removes an exact-match entry from the archive."""
+    archive = _make_archive_and_parse(tmp_path, {"a.txt": "A", "b.txt": "B", "c.txt": "C"})
+
+    with QuiverFile.open(str(archive), mode="a") as qf:
+        qf.delete("b.txt")
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        names = qf.getnames()
+    assert "b.txt" not in names
+    assert "a.txt" in names
+    assert "c.txt" in names
+
+
+def test_delete_directory_prefix(tmp_path: Path) -> None:
+    """delete() with a directory prefix removes all entries under that prefix."""
+    archive = _make_archive_and_parse(
+        tmp_path,
+        {
+            "src/main.py": "main",
+            "src/utils/helper.py": "helper",
+            "readme.txt": "readme",
+        },
+    )
+
+    with QuiverFile.open(str(archive), mode="a") as qf:
+        qf.delete("src")
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        names = qf.getnames()
+    assert "src/main.py" not in names
+    assert "src/utils/helper.py" not in names
+    assert "readme.txt" in names
+
+
+def test_delete_nonexistent_path_is_noop(tmp_path: Path) -> None:
+    """delete() with a path not in the archive is a silent no-op."""
+    archive = _make_archive_and_parse(tmp_path, {"a.txt": "A", "b.txt": "B"})
+    raw_before = archive.read_text(encoding="utf-8")
+
+    with QuiverFile.open(str(archive), mode="a") as qf:
+        qf.delete("does/not/exist.txt")
+
+    assert archive.read_text(encoding="utf-8") == raw_before
+
+
+def test_delete_in_read_mode_raises(tmp_path: Path) -> None:
+    """delete() raises ValueError when the archive is opened in read mode."""
+    archive = _make_archive_and_parse(tmp_path, {"a.txt": "A"})
+
+    with QuiverFile.open(str(archive), mode="r") as qf, pytest.raises(ValueError, match="mode"):
+        qf.delete("a.txt")
+
+
+def test_delete_in_write_mode_raises(tmp_path: Path) -> None:
+    """delete() raises ValueError when the archive is opened in write mode."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        f = tmp_path / "a.txt"
+        f.write_text("A", encoding="utf-8")
+        qf.add(str(f), arcname="a.txt")
+        with pytest.raises(ValueError, match="mode"):
+            qf.delete("a.txt")
+
+
+def test_delete_on_closed_archive_raises(tmp_path: Path) -> None:
+    """delete() raises ValueError when called after the archive is closed."""
+    archive = _make_archive_and_parse(tmp_path, {"a.txt": "A"})
+    qf = QuiverFile.open(str(archive), mode="a")
+    qf.close()
+
+    with pytest.raises(ValueError, match="closed"):
+        qf.delete("a.txt")
+
+
+def test_delete_all_entries(tmp_path: Path) -> None:
+    """Deleting every entry leaves an empty archive with a '.' directory tree."""
+    archive = _make_archive_and_parse(tmp_path, {"a.txt": "A", "b.txt": "B"})
+
+    with QuiverFile.open(str(archive), mode="a") as qf:
+        for name in list(qf.getnames()):
+            qf.delete(name)
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.getnames() == []
+
+    raw = archive.read_text(encoding="utf-8")
+    start = raw.index("<archive")
+    end = raw.index("</archive>") + len("</archive>")
+    root = etree.fromstring(raw[start:end].encode())
+    dt = root.find("directory_tree")
+    assert dt is not None
+    assert (dt.text or "").strip() == "."

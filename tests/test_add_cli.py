@@ -188,6 +188,8 @@ def test_add_upserts_existing_file(tmp_path: Path) -> None:
     hello_paths = [p for p in paths if p.endswith("hello.txt")]
     assert len(hello_paths) == 1, f"Expected exactly one hello.txt entry, got {paths}"
     assert _file_content(root, hello_paths[0]) == "updated content"
+
+
 def test_add_upsert_does_not_duplicate_entry(tmp_path: Path) -> None:
     """After upserting an existing path the total number of <file> elements is unchanged."""
     archive = _make_archive(tmp_path, {"a.txt": "A", "b.txt": "B"})
