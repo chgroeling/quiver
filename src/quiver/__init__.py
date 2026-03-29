@@ -41,7 +41,7 @@ def open(
         import quiver
 
         with quiver.open("archive.xml", mode="w") as qf:
-            qf.add("README.md")
+            qf.write("README.md")
         ```
     """
     return QuiverFile.open(name, mode, preamble=preamble, epilogue=epilogue)

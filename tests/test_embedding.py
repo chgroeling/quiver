@@ -374,7 +374,7 @@ def test_roundtrip_via_python_api(tmp_path: Path) -> None:
     src_file.write_text("world", encoding="utf-8")
 
     with QuiverFile.open(str(archive_path), mode="w", preamble="TOP\n", epilogue="\nBOTTOM") as qf:
-        qf.add(str(src_file))
+        qf.write(str(src_file))
 
     raw = archive_path.read_text(encoding="utf-8")
     assert raw.startswith("TOP\n")

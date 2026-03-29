@@ -47,7 +47,7 @@ def test_valid_modes(tmp_path: Path) -> None:
     f = tmp_path / "f.txt"
     f.write_text("x", encoding="utf-8")
     with QuiverFile(str(archive), mode="w") as qf:
-        qf.add(str(f))
+        qf.write(str(f))
     qf_r = QuiverFile(str(archive), mode="r")
     assert qf_r._mode == "r"
 
@@ -74,7 +74,7 @@ def test_module_open_factory(tmp_path: Path) -> None:
 
     qf = quiver.open(str(archive_path), mode="w")
     assert isinstance(qf, QuiverFile)
-    qf.add(str(input_file))
+    qf.write(str(input_file))
     qf.close()
 
 
@@ -89,7 +89,7 @@ def test_pack_single_file_produces_xml(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(input_file))
+        qf.write(str(input_file))
 
     xml_text = archive_path.read_text(encoding="utf-8")
     root = etree.fromstring(xml_text.encode())
@@ -111,7 +111,7 @@ def test_xml_uses_cdata_not_entity_encoding(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(input_file))
+        qf.write(str(input_file))
 
     raw_xml = archive_path.read_text(encoding="utf-8")
     assert "<![CDATA[" in raw_xml
@@ -131,9 +131,9 @@ def test_entries_sorted_alphabetically(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(zebra))
-        qf.add(str(apple))
-        qf.add(str(mango))
+        qf.write(str(zebra))
+        qf.write(str(apple))
+        qf.write(str(mango))
 
     raw_xml = archive_path.read_text(encoding="utf-8")
     root = etree.fromstring(raw_xml.encode())
@@ -147,7 +147,7 @@ def test_arcname_overrides_stored_path(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(input_file), arcname="stored/as/custom.txt")
+        qf.write(str(input_file), arcname="stored/as/custom.txt")
 
     raw_xml = archive_path.read_text(encoding="utf-8")
     root = etree.fromstring(raw_xml.encode())
@@ -157,7 +157,7 @@ def test_arcname_overrides_stored_path(tmp_path: Path) -> None:
 def test_add_nonexistent_file_raises(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive_path), mode="w"), pytest.raises(FileNotFoundError):
-        QuiverFile.open(str(archive_path), mode="w").add(str(tmp_path / "does_not_exist.txt"))
+        QuiverFile.open(str(archive_path), mode="w").write(str(tmp_path / "does_not_exist.txt"))
 
 
 def test_add_binary_file_raises(tmp_path: Path) -> None:
@@ -169,7 +169,7 @@ def test_add_binary_file_raises(tmp_path: Path) -> None:
         QuiverFile.open(str(archive_path), mode="w") as qf,
         pytest.raises(BinaryFileError, match="UTF-8"),
     ):
-        qf.add(str(binary))
+        qf.write(str(binary))
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ def test_add_file_with_null_byte_raises(tmp_path: Path) -> None:
         QuiverFile.open(str(archive_path), mode="w") as qf,
         pytest.raises(BinaryFileError, match=r"\\x00"),
     ):
-        qf.add(str(bad))
+        qf.write(str(bad))
 
 
 def test_add_file_with_control_char_raises(tmp_path: Path) -> None:
@@ -200,7 +200,7 @@ def test_add_file_with_control_char_raises(tmp_path: Path) -> None:
         QuiverFile.open(str(archive_path), mode="w") as qf,
         pytest.raises(BinaryFileError, match=r"\\x07"),
     ):
-        qf.add(str(bad))
+        qf.write(str(bad))
 
 
 def test_xml_control_char_error_contains_file_path(tmp_path: Path) -> None:
@@ -213,7 +213,7 @@ def test_xml_control_char_error_contains_file_path(tmp_path: Path) -> None:
         QuiverFile.open(str(archive_path), mode="w") as qf,
         pytest.raises(BinaryFileError) as exc_info,
     ):
-        qf.add(str(bad))
+        qf.write(str(bad))
 
     assert "offender.txt" in str(exc_info.value)
 
@@ -229,7 +229,7 @@ def test_xml_control_char_error_contains_line_and_col(tmp_path: Path) -> None:
         QuiverFile.open(str(archive_path), mode="w") as qf,
         pytest.raises(BinaryFileError) as exc_info,
     ):
-        qf.add(str(bad))
+        qf.write(str(bad))
 
     msg = str(exc_info.value)
     assert "line 2" in msg
@@ -248,7 +248,7 @@ def test_xml_control_char_error_multiple_occurrences(tmp_path: Path) -> None:
         QuiverFile.open(str(archive_path), mode="w") as qf,
         pytest.raises(BinaryFileError) as exc_info,
     ):
-        qf.add(str(bad))
+        qf.write(str(bad))
 
     msg = str(exc_info.value)
     # Should have at most 5 "line N, col M" entries.
@@ -269,7 +269,7 @@ def test_add_directory_with_control_char_file_raises(tmp_path: Path) -> None:
         QuiverFile.open(str(archive_path), mode="w") as qf,
         pytest.raises(BinaryFileError, match=r"\\x0b"),
     ):
-        qf.add(str(project))
+        qf.write(str(project))
 
 
 def test_add_directory_recursively_packs_files(tmp_path: Path) -> None:
@@ -284,7 +284,7 @@ def test_add_directory_recursively_packs_files(tmp_path: Path) -> None:
 
     output = tmp_path / "archive.xml"
     with QuiverFile.open(str(output), mode="w") as qf:
-        qf.add(str(project))
+        qf.write(str(project))
 
     root = etree.fromstring(output.read_text(encoding="utf-8").encode())
     paths = [elem.get("path") for elem in root.findall("file")]
@@ -299,7 +299,7 @@ def test_add_directory_binary_file_raises(tmp_path: Path) -> None:
 
     output = tmp_path / "archive.xml"
     with QuiverFile.open(str(output), mode="w") as qf, pytest.raises(BinaryFileError):
-        qf.add(str(project))
+        qf.write(str(project))
 
 
 def test_add_directory_arcname_prefixes_paths(tmp_path: Path) -> None:
@@ -310,7 +310,7 @@ def test_add_directory_arcname_prefixes_paths(tmp_path: Path) -> None:
 
     output = tmp_path / "archive.xml"
     with QuiverFile.open(str(output), mode="w") as qf:
-        qf.add(str(project), arcname="bundle")
+        qf.write(str(project), arcname="bundle")
 
     root = etree.fromstring(output.read_text(encoding="utf-8").encode())
     assert root.find("file").get("path") == "bundle/nested/a.txt"  # type: ignore[union-attr]
@@ -321,12 +321,12 @@ def test_add_in_read_mode_raises(tmp_path: Path) -> None:
     input_file.write_text("data", encoding="utf-8")
     archive_path = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(input_file))
+        qf.write(str(input_file))
     with (
         pytest.raises(ValueError, match="mode"),
         QuiverFile.open(str(archive_path), mode="r") as qf,
     ):
-        qf.add(str(input_file))
+        qf.write(str(input_file))
 
 
 def test_context_manager_writes_on_exit(tmp_path: Path) -> None:
@@ -334,7 +334,7 @@ def test_context_manager_writes_on_exit(tmp_path: Path) -> None:
     input_file.write_text("foo content", encoding="utf-8")
     output = tmp_path / "out.xml"
     with QuiverFile.open(str(output), mode="w") as qf:
-        qf.add(str(input_file))
+        qf.write(str(input_file))
     assert output.exists()
 
 
@@ -343,7 +343,7 @@ def test_close_is_idempotent(tmp_path: Path) -> None:
     input_file.write_text("foo", encoding="utf-8")
     output = tmp_path / "out.xml"
     qf = QuiverFile.open(str(output), mode="w")
-    qf.add(str(input_file))
+    qf.write(str(input_file))
     qf.close()
     qf.close()
 
@@ -361,8 +361,8 @@ def test_getnames_in_write_mode(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(a_file))
-        qf.add(str(b_file))
+        qf.write(str(a_file))
+        qf.write(str(b_file))
         names = qf.getnames()
     assert any(name.endswith("a.txt") for name in names)
     assert any(name.endswith("b.txt") for name in names)
@@ -374,7 +374,7 @@ def test_getmembers_returns_quiverinfo_objects(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(sample))
+        qf.write(str(sample))
         members = qf.getmembers()
     assert len(members) == 1
     assert isinstance(members[0], QuiverInfo)
@@ -398,7 +398,7 @@ def test_extractall_recreates_files(tmp_path: Path) -> None:
 
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(src))
+        qf.write(str(src))
 
     dest = tmp_path / "out"
     with QuiverFile.open(str(archive), mode="r") as qf:
@@ -417,7 +417,7 @@ def test_extractall_creates_intermediate_dirs(tmp_path: Path) -> None:
 
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(src))
+        qf.write(str(src))
 
     dest = tmp_path / "out"
     with QuiverFile.open(str(archive), mode="r") as qf:
@@ -434,7 +434,7 @@ def test_extractall_defaults_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(f))
+        qf.write(str(f))
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         qf.extractall()
@@ -454,7 +454,7 @@ def test_extractall_with_members_filter(tmp_path: Path) -> None:
 
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(src))
+        qf.write(str(src))
 
     dest = tmp_path / "out"
     with QuiverFile.open(str(archive), mode="r") as qf:
@@ -524,8 +524,8 @@ def test_read_mode_round_trip(tmp_path: Path) -> None:
 
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(f1))
-        qf.add(str(f2))
+        qf.write(str(f1))
+        qf.write(str(f2))
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         entry_map = {info.name: content for info, content in qf.entries}
@@ -546,7 +546,7 @@ def test_getnames_read_mode(tmp_path: Path) -> None:
     f.write_text("hello", encoding="utf-8")
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(f))
+        qf.write(str(f))
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         names = qf.getnames()
@@ -559,7 +559,7 @@ def test_getmembers_read_mode(tmp_path: Path) -> None:
     f.write_text("hello", encoding="utf-8")
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(f))
+        qf.write(str(f))
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         members = qf.getmembers()
@@ -586,7 +586,7 @@ def test_stored_path_uses_posix_separators(tmp_path: Path) -> None:
     (nested / "file.txt").write_text("x", encoding="utf-8")
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(tmp_path / "project"))
+        qf.write(str(tmp_path / "project"))
     with QuiverFile.open(str(archive), mode="r") as qf:
         names = qf.getnames()
     assert all("/" in n for n in names)
@@ -599,7 +599,7 @@ def test_stored_path_is_relative(tmp_path: Path) -> None:
     f.write_text("hi", encoding="utf-8")
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(f))
+        qf.write(str(f))
     with QuiverFile.open(str(archive), mode="r") as qf:
         names = qf.getnames()
     assert all(not n.startswith("/") for n in names)
@@ -611,7 +611,7 @@ def test_arcname_simple_filename_stored_as_is(tmp_path: Path) -> None:
     f.write_text("data", encoding="utf-8")
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(f), arcname="simple.txt")
+        qf.write(str(f), arcname="simple.txt")
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.getnames() == ["simple.txt"]
 
@@ -630,7 +630,7 @@ def test_xml_contains_directory_tree_element(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(project))
+        qf.write(str(project))
 
     root = etree.fromstring(archive_path.read_text(encoding="utf-8").encode())
     tree_elem = root.find("directory_tree")
@@ -646,7 +646,7 @@ def test_directory_tree_precedes_file_elements(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(f))
+        qf.write(str(f))
 
     root = etree.fromstring(archive_path.read_text(encoding="utf-8").encode())
     assert root[0].tag == "directory_tree"
@@ -665,7 +665,7 @@ def test_directory_tree_deep_nesting_integration(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(project))
+        qf.write(str(project))
 
     root = etree.fromstring(archive_path.read_text(encoding="utf-8").encode())
     tree_text = root.find("directory_tree").text  # type: ignore[union-attr]
@@ -685,7 +685,7 @@ def test_directory_tree_uses_cdata(tmp_path: Path) -> None:
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
-        qf.add(str(f))
+        qf.write(str(f))
 
     raw_xml = archive_path.read_text(encoding="utf-8")
     # The CDATA marker must appear before the first </directory_tree>
@@ -729,7 +729,7 @@ def test_xml_structure_validated_by_lxml(tmp_path: Path) -> None:
 
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(project))
+        qf.write(str(project))
 
     # Re-parse the raw XML with lxml to validate structure independently.
     raw_xml = archive.read_text(encoding="utf-8")
@@ -805,7 +805,7 @@ def test_preamble_property_parsed_from_archive(tmp_path: Path) -> None:
     with QuiverFile.open(str(archive), mode="w", preamble="# header\n") as qf:
         f = tmp_path / "a.txt"
         f.write_text("A", encoding="utf-8")
-        qf.add(str(f), arcname="a.txt")
+        qf.write(str(f), arcname="a.txt")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.preamble == "# header\n"
@@ -831,7 +831,7 @@ def test_epilogue_property_parsed_from_archive(tmp_path: Path) -> None:
     with QuiverFile.open(str(archive), mode="w", epilogue="# footer\n") as qf:
         f = tmp_path / "a.txt"
         f.write_text("A", encoding="utf-8")
-        qf.add(str(f), arcname="a.txt")
+        qf.write(str(f), arcname="a.txt")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.epilogue == "# footer\n"
@@ -843,7 +843,7 @@ def test_entries_property_returns_defensive_copy(tmp_path: Path) -> None:
     f = tmp_path / "a.txt"
     f.write_text("A", encoding="utf-8")
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(f), arcname="a.txt")
+        qf.write(str(f), arcname="a.txt")
         copy = qf.entries
         copy.clear()
         assert len(qf.entries) == 1
@@ -855,7 +855,7 @@ def test_entries_property_contains_info_and_content(tmp_path: Path) -> None:
     f = tmp_path / "hello.txt"
     f.write_text("world", encoding="utf-8")
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add(str(f), arcname="hello.txt")
+        qf.write(str(f), arcname="hello.txt")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         pairs = qf.entries

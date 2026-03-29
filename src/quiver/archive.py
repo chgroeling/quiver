@@ -677,8 +677,8 @@ class QuiverFile:
     Example:
         ```python
         with QuiverFile.open("archive.xml", mode="w") as qf:
-            qf.add("README.md")
-            qf.add("src/main.py", arcname="main.py")
+            qf.write("README.md")
+            qf.write("src/main.py", arcname="main.py")
         ```
     """
 
@@ -773,7 +773,7 @@ class QuiverFile:
     # Write API
     # ------------------------------------------------------------------
 
-    def add(self, name: str, arcname: str | None = None) -> None:
+    def write(self, name: str, arcname: str | None = None) -> None:
         """Add a file or directory to the archive.
 
         Args:
@@ -787,9 +787,9 @@ class QuiverFile:
             ValueError: If the archive is not open for writing, or if it has already been closed.
         """
         if self._mode != "w":
-            raise ValueError(f"Cannot add files in mode {self._mode!r}. Use mode 'w'.")
+            raise ValueError(f"Cannot write files in mode {self._mode!r}. Use mode 'w'.")
         if self._closed:
-            raise ValueError("Cannot add files to a closed archive.")
+            raise ValueError("Cannot write files to a closed archive.")
 
         file_path = Path(name)
         if not file_path.exists():
@@ -851,9 +851,9 @@ class QuiverFile:
             ValueError: If the archive is not open for writing, or if it has already been closed.
         """
         if self._mode != "w":
-            raise ValueError(f"Cannot add files in mode {self._mode!r}. Use mode 'w'.")
+            raise ValueError(f"Cannot write files in mode {self._mode!r}. Use mode 'w'.")
         if self._closed:
-            raise ValueError("Cannot add data to a closed archive.")
+            raise ValueError("Cannot write data to a closed archive.")
 
         posix = PurePosixPath(arcname)
         if posix.is_absolute():

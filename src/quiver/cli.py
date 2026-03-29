@@ -166,7 +166,7 @@ def _run_create(
             archive_file, mode="w", preamble=resolved_preamble, epilogue=resolved_epilogue
         ) as qf:
             for input_path in inputs:
-                qf.add(input_path)
+                qf.write(input_path)
     except FileNotFoundError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
@@ -237,7 +237,7 @@ def _run_add(
                     for info, content in existing_entries:
                         dst.add_text(info.name, content)
                     for input_path in inputs:
-                        dst.add(input_path)
+                        dst.write(input_path)
                 Path(tmp_name).replace(archive_file)
             except Exception:
                 with contextlib.suppress(OSError):
@@ -248,7 +248,7 @@ def _run_add(
             # Archive does not exist — create it from scratch.
             with QuiverFile.open(archive_file, mode="w") as dst:
                 for input_path in inputs:
-                    dst.add(input_path)
+                    dst.write(input_path)
             entry_count = 0
 
         logger.debug(

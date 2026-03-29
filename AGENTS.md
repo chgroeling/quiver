@@ -52,7 +52,7 @@ quiver/
 - **Structure:** `tests/` dir 1:1 mapping (`archive.py`->`test_archive.py`, `utils/__init__.py`->`test_utils.py`). `cli.py` splits to `test_cli.py` (smoke), `test_[create|extract|add]_cli.py`, `test_embedding.py`.
 - **FS Rules:** Prioritize critical paths. Use `tmp_path`. Name staging dirs `project/` (avoids `src/src/` nesting).
 - **Paths:** Stored paths include top-level prefix (`project/src/main.py`). Assert via `endswith()` or `rglob()`.
-- **Upserts:** Merges compare **full stored paths**. Triggers require replacement file added from a dir matching original `add()` root.
+- **Upserts:** Merges compare **full stored paths**. Triggers require replacement file added from a dir matching original `write()` root.
 - **Public API only:** Never import or call private symbols (names starting with `_`) from `src/` in tests. Test behaviour exclusively through the public API.
 - **No inline imports:** All imports must be at the top of the test file. `import` statements inside test functions are forbidden.
 
@@ -104,10 +104,10 @@ Public API mirrors `tarfile`. Entry: `quiver.open()`.
 - **Factory**: `QuiverFile.open(name, mode, preamble=None, epilogue=None)`
 - **Modes**: `'r'` (read), `'w'` (write).
 - **Context Manager**: Auto-calls `close()`.
-- **`add(name, arcname=None)`**:
+- **`write(name, arcname=None)`**:
   - Validates UTF-8 & XML-1.0 compatibility.
   - Normalizes POSIX paths; upserts `self._entries`.
-  - Preserves dir name as prefix (e.g., `add("dir")` -> `dir/file.txt`) unless `arcname` provided.
+  - Preserves dir name as prefix (e.g., `write("dir")` -> `dir/file.txt`) unless `arcname` provided.
   - Uses async reader/writer with bounded backpressure.
 - **`add_text(arcname, content)`**:
   - Inserts an in-memory string as an archive entry (upserts by `arcname`).
@@ -163,7 +163,7 @@ Style: `tar` (e.g., `quiver -cvf archive.xml src`)
 | --------------------------------- | --------------------------------------------- |
 | `QuiverFile.__init__`             | `archive_name=`, `mode=`                      |
 | `QuiverFile.__init__` (parse)     | `archive_name=`, `elapsed_s=`, `entry_count=` |
-| `QuiverFile.add`                  | `entry_path=`, `size=`                        |
+| `QuiverFile.write`                | `entry_path=`, `size=`                        |
 | `QuiverFile.close`                | `archive_name=`, `elapsed_s=`, `entry_count=` |
 | `_PackPipeline.run`               | `elapsed_s=`, `file_count=`, `total_bytes=`   |
 | `_ExtractPipeline.run`            | `elapsed_s=`, `file_count=`, `total_bytes=`   |
@@ -175,11 +175,11 @@ Style: `tar` (e.g., `quiver -cvf archive.xml src`)
 - **CLI:** Tar-style bundled flags (`-cvf`) via custom pre-processing.
 - **Concurrency/OOM:** Asyncio/threading, bounded Reader/Writer queues, chunk-streaming large files.
 - **Single Writer:** Dedicated task for XML output ensures determinism, Git-friendliness, & prevents deadlocks.
-- **Normalization:** POSIX paths. Entries sorted alphabetically in XML by *full stored path*. Tar semantics: `add("mydir")` prepends dir (`mydir/file.txt`); `arcname` overrides. Edge case `Path(".").name == ""` uses `.resolve().name`.
+- **Normalization:** POSIX paths. Entries sorted alphabetically in XML by *full stored path*. Tar semantics: `write("mydir")` prepends dir (`mydir/file.txt`); `arcname` overrides. Edge case `Path(".").name == ""` uses `.resolve().name`.
 - **Security (L1):** Sandboxed unpack. `_validate_extraction_path()` rejects absolute & `../` pre-resolution; validates inside dest via `Path.relative_to()`.
 - **Content Validation (L2):** Checks inside `_read_text_file[_async]()` raise `BinaryFileError`: 1) `_decode_utf8()` (rejects non-UTF-8). 2) `_validate_xml_compatible()` (rejects `[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]`, max 5 errors reported) preventing late `lxml` serialization crash.
 - **Extraction (`_ExtractPipeline`, L3.5):** Bounded `asyncio.Queue` streams `(path, content)` to concurrent workers that validate, create dirs (`to_thread`), and write (`aiofile`). Isolated XML parsed via `lxml.etree.fromstring`.
-- **Transactions (`__exit__`):** If `exc_type` exists, `QuiverFile.__exit__` sets `self._closed = True` without `close()`. Prevents corrupt/truncated archive on failed `add()` (matches `tarfile`).
+- **Transactions (`__exit__`):** If `exc_type` exists, `QuiverFile.__exit__` sets `self._closed = True` without `close()`. Prevents corrupt/truncated archive on failed `write()` (matches `tarfile`).
 - **Modes ('r'/'w'):** Open `'r'` parses archive (`_parse_archive()`), populating `_entries`, `_preamble`, `_epilogue` (raises `FileNotFoundError` if missing). Open `'w'` starts with an empty entry list; `close()` writes to disk.
 - **Add/Upsert (CLI repack):** `-a` is not a Python API mode. The CLI opens the archive in `'r'` mode, reads `entries`/`preamble`/`epilogue` via public properties, replays existing entries via `add_text()` into a `'w'`-mode temp file, adds new inputs via `add()` (upsert semantics handled in-memory), then atomically replaces the original with `os.replace()`. When the archive does not exist, `-a` degrades to a plain `'w'` create. No partial writes can corrupt the archive.
 - **Delete (CLI repack):** `--delete` is not a Python API method. The CLI opens the archive in `'r'` mode, reads `entries`/`preamble`/`epilogue` via public properties, filters entries, writes the result to a sibling temp file via `'w'` mode + `add_text()`, then atomically replaces the original with `os.replace()`. No partial writes can corrupt the archive.

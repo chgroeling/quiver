@@ -17,7 +17,7 @@ Extension of the core logic to recursively pack entire directories. This feature
 
 ### 2.3. XML Structure
 * **Paths:** All paths in the XML (`<file path="...">`) must be normalized as POSIX paths (using `/`) and **include the top-level directory name as a prefix**, matching `tar` semantics. For example, packing a directory named `myproject` stores paths as `myproject/src/main.py`, not `src/main.py`.
-* **`arcname` override:** When `arcname` is supplied to `QuiverFile.add()`, it replaces the directory's own name as the prefix (e.g., `arcname="bundle"` stores `bundle/src/main.py`).
+* **`arcname` override:** When `arcname` is supplied to `QuiverFile.write()`, it replaces the directory's own name as the prefix (e.g., `arcname="bundle"` stores `bundle/src/main.py`).
 
 ### 2.4. Expected XML Output Format
 The XML contains a flat, alphabetically sorted list of files with full directory-prefixed paths:
