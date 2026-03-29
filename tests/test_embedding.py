@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 from click.testing import CliRunner
 
-from quiver.archive import QuiverFile, _split_archive_text
+from quiver.archive import QuiverFile
 from quiver.cli import main
 
 if TYPE_CHECKING:
@@ -15,69 +15,91 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests for _split_archive_text
+# Preamble / epilogue round-trip tests (public API)
 # ---------------------------------------------------------------------------
 
 
-def test_split_archive_text_no_surrounding_text() -> None:
-    xml = '<archive version="1.0"><file path="a.txt"><content><![CDATA[hi]]></content></file></archive>'
-    preamble, xml_content, epilogue = _split_archive_text(xml)
-    assert preamble == ""
-    assert xml_content == xml
-    assert epilogue == ""
+def test_preamble_absent_when_none_given(tmp_path: Path) -> None:
+    """An archive written without a preamble has no preamble on read-back."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("a.txt", "hi")
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.preamble is None
 
 
-def test_split_archive_text_with_preamble_and_epilogue() -> None:
-    raw = 'Before text\n<archive version="1.0"></archive>\nAfter text'
-    preamble, xml_content, epilogue = _split_archive_text(raw)
-    assert preamble == "Before text"
-    assert xml_content == '<archive version="1.0"></archive>'
-    assert epilogue == "After text"
+def test_epilogue_absent_when_none_given(tmp_path: Path) -> None:
+    """An archive written without an epilogue has no epilogue on read-back."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("a.txt", "hi")
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.epilogue is None
 
 
-def test_split_archive_text_first_match_rule() -> None:
-    """Only the first <archive> block is captured; everything after </archive> is epilogue."""
-    raw = (
-        "intro\n"
-        '<archive version="1.0"><file path="a.txt"><content><![CDATA[A]]></content></file></archive>\n'
-        "middle\n"
-        '<archive version="1.0"><file path="b.txt"><content><![CDATA[B]]></content></file></archive>\n'
-    )
-    preamble, xml_content, epilogue = _split_archive_text(raw)
-    assert preamble == "intro"
-    assert xml_content.startswith("<archive")
-    assert xml_content.endswith("</archive>")
-    assert "b.txt" not in xml_content
-    assert "b.txt" in epilogue
-    assert "middle" in epilogue
+def test_preamble_and_epilogue_round_trip(tmp_path: Path) -> None:
+    """Preamble and epilogue supplied at write time survive a full round-trip."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w", preamble="Before text", epilogue="After text") as qf:
+        qf.add_text("a.txt", "hi")
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.preamble == "Before text"
+        assert qf.epilogue == "After text"
 
 
-def test_split_archive_text_missing_open_tag_raises() -> None:
+def test_first_archive_block_wins_multiple_blocks(tmp_path: Path) -> None:
+    """When raw file content contains two <archive> blocks the second is treated as epilogue."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("a.txt", "A")
+    # Append a second archive block as epilogue by rewriting the file directly.
+    raw = archive.read_text(encoding="utf-8")
+    second_block = '<archive version="1.0"><file path="b.txt"><content><![CDATA[B]]></content></file></archive>\n'
+    archive.write_text(raw + second_block, encoding="utf-8")
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.getnames() == ["a.txt"]
+        assert qf.epilogue is not None
+        assert "b.txt" in qf.epilogue
+
+
+def test_missing_archive_tag_raises(tmp_path: Path) -> None:
+    """Opening a file with no <archive> element raises ValueError."""
+    bad = tmp_path / "bad.xml"
+    bad.write_text("just plain text with no archive element", encoding="utf-8")
     with pytest.raises(ValueError, match="No <archive>"):
-        _split_archive_text("just plain text with no archive element")
+        QuiverFile.open(str(bad), mode="r")
 
 
-def test_split_archive_text_missing_close_tag_raises() -> None:
+def test_missing_close_tag_raises(tmp_path: Path) -> None:
+    """Opening a file whose <archive> tag is never closed raises ValueError."""
+    bad = tmp_path / "bad.xml"
+    bad.write_text('<archive version="1.0"><file path="x.txt"/>', encoding="utf-8")
     with pytest.raises(ValueError, match="No </archive>"):
-        _split_archive_text('<archive version="1.0"><file path="x.txt"/>')
+        QuiverFile.open(str(bad), mode="r")
 
 
-def test_split_archive_text_strips_sentinels() -> None:
-    """Preamble sentinel written by _write_archive is stripped verbatim on read."""
-    from quiver.archive import _PREAMBLE_SENTINEL
-
+def test_preamble_sentinel_stripped_on_round_trip(tmp_path: Path) -> None:
+    """The newline sentinel between preamble and <archive> is not part of the preamble value."""
+    archive = tmp_path / "archive.xml"
     preamble_text = "My preamble"
-    raw = preamble_text + _PREAMBLE_SENTINEL + '<archive version="1.0"></archive>'
-    preamble, _xml_content, _epilogue = _split_archive_text(raw)
-    assert preamble == preamble_text
+    with QuiverFile.open(str(archive), mode="w", preamble=preamble_text) as qf:
+        qf.add_text("a.txt", "content")
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.preamble == preamble_text
 
 
-def test_split_archive_text_no_sentinel_no_strip() -> None:
-    """Hand-crafted archives without sentinels: empty preamble/epilogue stay empty."""
-    xml = '<archive version="1.0"><file path="a.txt"><content><![CDATA[hi]]></content></file></archive>'
-    preamble, xml_content, epilogue = _split_archive_text(xml)
-    assert preamble == ""
-    assert epilogue == ""
+def test_no_sentinel_no_strip(tmp_path: Path) -> None:
+    """Hand-crafted archives without preamble/epilogue read back with None for both."""
+    archive = tmp_path / "archive.xml"
+    archive.write_text(
+        '<archive version="1.0">'
+        '<file path="a.txt"><content><![CDATA[hi]]></content></file>'
+        "</archive>",
+        encoding="utf-8",
+    )
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.preamble is None
+        assert qf.epilogue is None
 
 
 # ---------------------------------------------------------------------------

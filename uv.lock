@@ -760,13 +760,13 @@ source = { editable = "." }
 dependencies = [
     { name = "aiofile" },
     { name = "click" },
-    { name = "lxml" },
     { name = "rich" },
     { name = "structlog" },
 ]
 
 [package.optional-dependencies]
 dev = [
+    { name = "lxml" },
     { name = "lxml-stubs" },
     { name = "mypy" },
     { name = "pytest" },
@@ -784,7 +784,7 @@ docs = [
 requires-dist = [
     { name = "aiofile", specifier = ">=3.8.0" },
     { name = "click", specifier = ">=8.1.0" },
-    { name = "lxml", specifier = ">=5.0.0" },
+    { name = "lxml", marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "lxml-stubs", marker = "extra == 'dev'", specifier = ">=0.5.0" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.0.0" },

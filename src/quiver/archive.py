@@ -10,7 +10,7 @@ Internal layer layout (top → bottom, no upward imports):
     Layer 2 — I/O                 (file reading, directory walking)
     Layer 3 — Async Pack Pipeline  (_PackPipeline)
     Layer 3.5 — Async Extract Pipeline (_ExtractPipeline)
-    Layer 4 — XML Serialization   (lxml, no asyncio)
+    Layer 4 — XML Serialization   (string-building + regex, no asyncio)
     Layer 5 — Public API          (QuiverInfo, QuiverFile)
 """
 
@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, cast
 
 import structlog
 from aiofile import async_open
-from lxml import etree
 
 from quiver.utils import build_directory_tree
 
@@ -44,9 +43,9 @@ QUEUE_MAXSIZE = 64
 # Sentinels written at the preamble→XML and XML→epilogue seams.
 # Defined as constants so the marker can be changed in one place.
 # _PREAMBLE_SENTINEL is appended after the preamble so that <archive> always
-# starts on its own line.  _EPILOGUE_SENTINEL is empty because lxml
-# pretty_print already ends the XML with \n, which acts as the natural
-# separator before the epilogue.
+# starts on its own line.  _EPILOGUE_SENTINEL is empty because _build_xml_str
+# always ends the XML block with \n (after </archive>), which acts as the
+# natural separator before the epilogue.
 _PREAMBLE_SENTINEL = "\n"
 _EPILOGUE_SENTINEL = ""
 
@@ -172,20 +171,20 @@ _XML_FORBIDDEN_RE = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]")
 _MAX_REPORTED_OFFENCES = 5
 
 
-def _validate_xml_compatible(content: str, path: Path) -> None:
+def _validate_xml_compatible(content: str, label: str) -> None:
     """Raise `BinaryFileError` if *content* contains XML-1.0-forbidden characters.
 
     Scans for NULL bytes and control characters that are legal UTF-8 but rejected
-    by lxml's CDATA serializer.  Reports up to `_MAX_REPORTED_OFFENCES` locations
+    by the CDATA serializer.  Reports up to `_MAX_REPORTED_OFFENCES` locations
     (line number, column, hex value) so the caller can locate the offending bytes.
 
     Args:
         content: Decoded text to validate.
-        path: Source file path used in the error message.
+        label: Human-readable identifier (file path or arcname) used in the error message.
 
     Raises:
         BinaryFileError: If any forbidden character is found, with a message that
-            includes the file path and the location of each offending character.
+            includes *label* and the location of each offending character.
     """
     offences: list[str] = []
     for match in _XML_FORBIDDEN_RE.finditer(content):
@@ -200,7 +199,7 @@ def _validate_xml_compatible(content: str, path: Path) -> None:
     if offences:
         locations = "\n".join(offences)
         raise BinaryFileError(
-            f"File {str(path)!r} contains XML-incompatible control characters "
+            f"File {label!r} contains XML-incompatible control characters "
             f"and cannot be packed.\n{locations}"
         )
 
@@ -219,7 +218,7 @@ def _read_text_file(path: Path) -> str:
             XML-incompatible control characters.
     """
     content = _decode_utf8(path.read_bytes(), path)
-    _validate_xml_compatible(content, path)
+    _validate_xml_compatible(content, str(path))
     return content
 
 
@@ -233,7 +232,7 @@ async def _read_text_file_async(path: Path) -> str:
     async with async_open(path, "rb") as afp:
         raw = cast("bytes", await afp.read())
     content = _decode_utf8(raw, path)
-    _validate_xml_compatible(content, path)
+    _validate_xml_compatible(content, str(path))
     return content
 
 
@@ -261,7 +260,7 @@ def _split_archive_text(raw: str) -> tuple[str, str, str]:
 
     Returns:
         A ``(preamble, xml_content, epilogue)`` triple where *xml_content*
-        is the full `<archive>…</archive>` string ready for ``lxml`` parsing.
+        is the full `<archive>…</archive>` string.
 
     Raises:
         ValueError: If no `<archive>` or `</archive>` tag can be found.
@@ -286,7 +285,7 @@ def _split_archive_text(raw: str) -> tuple[str, str, str]:
         preamble = preamble[: -len(_PREAMBLE_SENTINEL)]
     if _EPILOGUE_SENTINEL and epilogue and epilogue.startswith(_EPILOGUE_SENTINEL):
         epilogue = epilogue[len(_EPILOGUE_SENTINEL) :]
-    # lxml pretty_print always appends \n after </archive>.  That \n lands at
+    # _build_xml_str always appends \n after </archive>.  That \n lands at
     # the start of the epilogue slice (not inside xml_content) and is a
     # formatting artifact, not user content.  Strip exactly one leading \n so
     # the epilogue round-trips verbatim.  Only strip when epilogue is non-empty
@@ -300,13 +299,35 @@ def _split_archive_text(raw: str) -> tuple[str, str, str]:
 type _ParseResult = tuple[list[tuple[str, str]], str, str]
 
 
+# Matches a single <file path="...">…</file> block.  The content CDATA is
+# captured lazily (re.DOTALL) so that multiple entries do not bleed together.
+_FILE_ENTRY_RE = re.compile(
+    r'<file\s+path="([^"]*)">'         # group 1 — stored path attribute
+    r"\s*<content>"                     # opening <content> tag
+    r"(?:<!\[CDATA\[(.*?)\]\]>|"       # group 2 — CDATA block (may be absent)
+    r"([^<]*))"                          # group 3 — plain text (empty element)
+    r"\s*</content>"                    # closing </content> tag
+    r"\s*</file>",                      # closing </file> tag
+    re.DOTALL,
+)
+
+
+def _unescape_cdata(raw_cdata: str) -> str:
+    """Reverse the CDATA split applied by `_escape_cdata`.
+
+    A sequence ``]]]]><![CDATA[>`` is the standard way to embed ``]]>`` inside
+    a CDATA section by splitting it into two adjacent sections.  Collapse those
+    split-points back to the original ``]]>`` string.
+    """
+    return raw_cdata.replace("]]]]><![CDATA[>", "]]>")
+
+
 def _parse_archive(archive_path: str) -> _ParseResult:
     """Parse a quiver XML archive and return its file entries with surrounding text.
 
     Reads the raw file, splits out any preamble and epilogue via
-    [_split_archive_text][], then parses only the first `<archive>` XML block
-    using `lxml.etree.fromstring`.  CDATA text from each `<file>` element is
-    extracted verbatim.
+    [_split_archive_text][], then extracts ``<file>`` entries from the XML
+    block using regex — no XML parser required.
 
     Args:
         archive_path: Filesystem path to the quiver XML archive.
@@ -324,12 +345,12 @@ def _parse_archive(archive_path: str) -> _ParseResult:
     raw = Path(archive_path).read_text(encoding="utf-8")
     preamble, xml_content, epilogue = _split_archive_text(raw)
 
-    root = etree.fromstring(xml_content.encode("utf-8"))  # noqa: S320
     entries: list[tuple[str, str]] = []
-    for elem in root.iter("file"):
-        stored_path = elem.get("path", "")
-        content_elem = elem.find("content")
-        content = content_elem.text if content_elem is not None and content_elem.text else ""
+    for m in _FILE_ENTRY_RE.finditer(xml_content):
+        stored_path = m.group(1)
+        # group 2 is set when a CDATA block is present; group 3 covers plain text.
+        raw_content = m.group(2) if m.group(2) is not None else (m.group(3) or "")
+        content = _unescape_cdata(raw_content)
         entries.append((stored_path, content))
 
     return entries, preamble, epilogue
@@ -438,9 +459,7 @@ class _PackPipeline:
 class _ExtractPipeline:
     """Bounded-queue async pipeline that writes extracted files to disk.
 
-    Parsing is offloaded to a thread pool so that synchronous `lxml.iterparse`
-    does not block the event loop.  File writing is fully asynchronous via
-    `aiofile`.
+    File writing is fully asynchronous via `aiofile`.
 
     Args:
         entries: List of `(stored_path, content)` pairs to extract.
@@ -514,34 +533,54 @@ class _ExtractPipeline:
 # ===========================================================================
 
 
-def _build_xml_tree(entries: list[tuple[QuiverInfo, str]]) -> etree._Element:
-    """Build the lxml element tree for the archive.
+def _escape_cdata(content: str) -> str:
+    """Escape *content* for safe embedding inside a CDATA section.
+
+    A CDATA section cannot contain the literal string ``]]>``.  The standard
+    workaround is to split the CDATA block at that sequence, closing the
+    current section and immediately opening a new one so that ``]]>`` itself
+    never appears verbatim.
+
+    Args:
+        content: Raw text to embed.
+
+    Returns:
+        The text with ``]]>`` replaced by ``]]]]><![CDATA[>``.
+    """
+    return content.replace("]]>", "]]]]><![CDATA[>")
+
+
+def _build_xml_str(entries: list[tuple[QuiverInfo, str]]) -> str:
+    """Build the XML string for the archive without an XML parser.
 
     Entries are sorted alphabetically by their stored POSIX path. A
-    `<directory_tree>` element is inserted as the first child of `<archive>`,
-    containing a CDATA-wrapped visual tree of all packed paths.
+    ``<directory_tree>`` element is inserted as the first child of
+    ``<archive>``, containing a CDATA-wrapped visual tree of all packed paths.
+    Each ``<file>`` entry wraps its content in a CDATA section.
+
+    The returned string ends with ``\n`` (after ``</archive>``) to match the
+    behaviour of lxml ``pretty_print=True`` so that round-trip parsing via
+    [_split_archive_text][] and [_parse_archive][] is byte-identical.
 
     Args:
         entries: List of `(QuiverInfo, content)` pairs.
 
     Returns:
-        The `<archive>` root element.
+        The complete ``<archive>…</archive>\n`` XML string.
     """
-    root = etree.Element("archive", version=ARCHIVE_VERSION)
-
     sorted_entries = sorted(entries, key=lambda e: e[0].name)
     paths = [info.name for info, _ in sorted_entries]
-
     tree_text = build_directory_tree(paths)
-    tree_elem = etree.SubElement(root, "directory_tree")
-    tree_elem.text = etree.CDATA("\n" + tree_text + "\n")
 
+    lines: list[str] = []
+    lines.append(f'<archive version="{ARCHIVE_VERSION}">')
+    lines.append(f"  <directory_tree><![CDATA[\n{tree_text}\n]]></directory_tree>")
     for info, content in sorted_entries:
-        file_elem = etree.SubElement(root, "file", path=info.name)
-        content_elem = etree.SubElement(file_elem, "content")
-        content_elem.text = etree.CDATA(content)
-
-    return root
+        lines.append(f'  <file path="{info.name}">')
+        lines.append(f"    <content><![CDATA[{_escape_cdata(content)}]]></content>")
+        lines.append("  </file>")
+    lines.append("</archive>")
+    return "\n".join(lines) + "\n"
 
 
 def _write_archive(
@@ -550,7 +589,7 @@ def _write_archive(
     preamble: str | None = None,
     epilogue: str | None = None,
 ) -> None:
-    """Serialize the XML archive tree to *output_path*.
+    """Serialize the XML archive to *output_path*.
 
     Optionally wraps the XML with plain-text *preamble* and/or *epilogue*.
     A single newline is inserted between the preamble and the opening
@@ -563,13 +602,7 @@ def _write_archive(
         preamble: Optional text to prepend before the XML.
         epilogue: Optional text to append after the XML.
     """
-    root = _build_xml_tree(entries)
-    xml_str = etree.tostring(
-        root,
-        pretty_print=True,
-        xml_declaration=False,
-        encoding="unicode",
-    )
+    xml_str = _build_xml_str(entries)
 
     parts: list[str] = []
     if preamble:
@@ -791,10 +824,16 @@ class QuiverFile:
         workflows where content is already loaded in memory.
 
         Args:
-            arcname: POSIX path to store inside the archive.
-            content: UTF-8 text content for the entry.
+            arcname: POSIX path to store inside the archive.  Must be a clean
+                relative path: absolute paths and any ``..`` component are
+                rejected.
+            content: UTF-8 text content for the entry.  Must not contain
+                XML-1.0-forbidden control characters.
 
         Raises:
+            PathTraversalError: If *arcname* is absolute or contains ``..``.
+            BinaryFileError: If *content* contains XML-incompatible control
+                characters.
             ValueError: If the archive is not open for writing/appending,
                 or if it has already been closed.
         """
@@ -802,6 +841,17 @@ class QuiverFile:
             raise ValueError(f"Cannot add files in mode {self._mode!r}. Use mode 'w' or 'a'.")
         if self._closed:
             raise ValueError("Cannot add data to a closed archive.")
+
+        posix = PurePosixPath(arcname)
+        if posix.is_absolute():
+            raise PathTraversalError(
+                f"arcname {arcname!r} is an absolute path and cannot be stored safely."
+            )
+        if ".." in posix.parts:
+            raise PathTraversalError(
+                f"arcname {arcname!r} contains '..' and cannot be stored safely."
+            )
+        _validate_xml_compatible(content, arcname)
 
         stored_path = _normalize_stored_path(arcname)
         info = QuiverInfo(name=stored_path, size=len(content.encode("utf-8")))

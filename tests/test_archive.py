@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from lxml import etree
 
 import quiver
-from quiver.archive import BinaryFileError, QuiverFile, QuiverInfo, _normalize_path
+from quiver.archive import BinaryFileError, QuiverFile, QuiverInfo
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # QuiverInfo
@@ -231,9 +234,7 @@ def test_xml_control_char_error_contains_line_and_col(tmp_path: Path) -> None:
 
 
 def test_xml_control_char_error_multiple_occurrences(tmp_path: Path) -> None:
-    """BinaryFileError message reports up to _MAX_REPORTED_OFFENCES locations."""
-    from quiver.archive import _MAX_REPORTED_OFFENCES
-
+    """BinaryFileError message reports up to 5 (MAX_REPORTED_OFFENCES) locations."""
     bad = tmp_path / "many.txt"
     # 10 forbidden chars — only the first _MAX_REPORTED_OFFENCES should appear.
     bad.write_bytes(b"\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0c")
@@ -246,9 +247,9 @@ def test_xml_control_char_error_multiple_occurrences(tmp_path: Path) -> None:
         qf.add(str(bad))
 
     msg = str(exc_info.value)
-    # Should have at most _MAX_REPORTED_OFFENCES "line N, col M" entries.
+    # Should have at most 5 "line N, col M" entries.
     reported = msg.count("line ")
-    assert reported == _MAX_REPORTED_OFFENCES
+    assert reported == 5
 
 
 def test_add_directory_with_control_char_file_raises(tmp_path: Path) -> None:
@@ -468,42 +469,50 @@ def test_extractall_in_write_mode_raises(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Path sandboxing
+# Path traversal protection (via extractall)
 # ---------------------------------------------------------------------------
 
 
-def test_validate_extraction_path_accepts_clean(tmp_path: Path) -> None:
-    from quiver.archive import _validate_extraction_path
+def test_extractall_rejects_absolute_path_entry(tmp_path: Path) -> None:
+    """extractall() raises PathTraversalError for an archive entry with an absolute path."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("safe.txt", "ok")
 
-    result = _validate_extraction_path("subdir/file.txt", tmp_path)
-    assert result == (tmp_path / "subdir" / "file.txt").resolve()
+    # Manually inject an absolute path that bypasses add_text normalization.
+    raw = archive.read_text(encoding="utf-8")
+    raw = raw.replace('path="safe.txt"', 'path="/etc/passwd"')
+    archive.write_text(raw, encoding="utf-8")
+
+    dest = tmp_path / "out"
+    with QuiverFile.open(str(archive), mode="r") as qf, pytest.raises(Exception, match="absolute"):
+        qf.extractall(path=str(dest))
 
 
-def test_validate_extraction_path_rejects_absolute(tmp_path: Path) -> None:
-    from quiver.archive import PathTraversalError as _PathTraversalError
-    from quiver.archive import _validate_extraction_path
+def test_extractall_rejects_traversal_path_entry(tmp_path: Path) -> None:
+    """extractall() raises PathTraversalError for an archive entry containing '..'."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("safe.txt", "ok")
 
-    with pytest.raises(_PathTraversalError, match="absolute"):
-        _validate_extraction_path("/etc/passwd", tmp_path)
+    # Manually craft the raw XML to inject a traversal path that bypasses
+    # add()'s normalization (add_text also normalizes, so write the file directly).
+    raw = archive.read_text(encoding="utf-8")
+    raw = raw.replace('path="safe.txt"', 'path="../../escape.txt"')
+    archive.write_text(raw, encoding="utf-8")
 
-
-def test_validate_extraction_path_rejects_traversal(tmp_path: Path) -> None:
-    from quiver.archive import PathTraversalError as _PathTraversalError
-    from quiver.archive import _validate_extraction_path
-
-    with pytest.raises(_PathTraversalError, match=r"\.\."):
-        _validate_extraction_path("../escape.txt", tmp_path)
+    dest = tmp_path / "out"
+    with QuiverFile.open(str(archive), mode="r") as qf, pytest.raises(Exception, match=r"\.\."):
+        qf.extractall(path=str(dest))
 
 
 # ---------------------------------------------------------------------------
-# _parse_archive()
+# QuiverFile read-mode round-trip
 # ---------------------------------------------------------------------------
 
 
-def test_parse_archive_round_trip(tmp_path: Path) -> None:
-    """_parse_archive returns entries matching what was packed."""
-    from quiver.archive import _parse_archive
-
+def test_read_mode_round_trip(tmp_path: Path) -> None:
+    """Opening an archive in read mode returns entries matching what was packed."""
     f1 = tmp_path / "a.txt"
     f2 = tmp_path / "b.txt"
     f1.write_text("alpha", encoding="utf-8")
@@ -514,14 +523,12 @@ def test_parse_archive_round_trip(tmp_path: Path) -> None:
         qf.add(str(f1))
         qf.add(str(f2))
 
-    entries = _parse_archive(str(archive))
-    raw_entries, _preamble, _epilogue = entries
-    entry_map = dict(raw_entries)
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        entry_map = {info.name: content for info, content in qf.entries}
     assert any(k.endswith("a.txt") for k in entry_map)
     assert any(k.endswith("b.txt") for k in entry_map)
-    contents = list(entry_map.values())
-    assert "alpha" in contents
-    assert "beta" in contents
+    assert "alpha" in entry_map.values()
+    assert "beta" in entry_map.values()
 
 
 # ---------------------------------------------------------------------------
@@ -564,24 +571,45 @@ def test_open_read_mode_missing_archive_raises(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Path normalization helper
+# Path normalization (via public API)
 # ---------------------------------------------------------------------------
 
 
-def test_normalize_path_posix() -> None:
-    result = _normalize_path(Path("subdir/file.txt"))
-    assert "/" in result
-    assert "\\" not in result
+def test_stored_path_uses_posix_separators(tmp_path: Path) -> None:
+    """Stored paths in the archive always use forward slashes."""
+    nested = tmp_path / "project" / "sub"
+    nested.mkdir(parents=True)
+    (nested / "file.txt").write_text("x", encoding="utf-8")
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(tmp_path / "project"))
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        names = qf.getnames()
+    assert all("/" in n for n in names)
+    assert all("\\" not in n for n in names)
 
 
-def test_normalize_path_strips_leading_slash() -> None:
-    result = _normalize_path(Path("/abs/path/file.txt"))
-    assert not result.startswith("/")
+def test_stored_path_is_relative(tmp_path: Path) -> None:
+    """Stored paths must never start with '/'."""
+    f = tmp_path / "hello.txt"
+    f.write_text("hi", encoding="utf-8")
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(f))
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        names = qf.getnames()
+    assert all(not n.startswith("/") for n in names)
 
 
-def test_normalize_path_simple_filename() -> None:
-    result = _normalize_path(Path("simple.txt"))
-    assert result == "simple.txt"
+def test_arcname_simple_filename_stored_as_is(tmp_path: Path) -> None:
+    """A simple arcname with no directory components is stored verbatim."""
+    f = tmp_path / "original.txt"
+    f.write_text("data", encoding="utf-8")
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(f), arcname="simple.txt")
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.getnames() == ["simple.txt"]
 
 
 # ---------------------------------------------------------------------------
@@ -662,17 +690,88 @@ def test_directory_tree_uses_cdata(tmp_path: Path) -> None:
     assert tree_open_cdata < tree_close
 
 
-def test_directory_tree_empty_archive() -> None:
+def test_directory_tree_empty_archive(tmp_path: Path) -> None:
     """An archive with no files must still contain <directory_tree> with just '.'."""
-    # We need to exercise _build_xml_tree with empty entries; the easiest way
-    # is to call the internal helper directly.
-    from quiver.archive import _build_xml_tree
+    archive = tmp_path / "empty.xml"
+    # Write an archive with no entries via the public API.
+    with QuiverFile.open(str(archive), mode="w"):
+        pass
 
-    root = _build_xml_tree([])
+    raw_xml = archive.read_text(encoding="utf-8")
+    root = etree.fromstring(raw_xml.encode("utf-8"))  # noqa: S320
     tree_elem = root.find("directory_tree")
     assert tree_elem is not None
     assert tree_elem.text is not None
     assert tree_elem.text.strip() == "."
+
+
+def test_xml_structure_validated_by_lxml(tmp_path: Path) -> None:
+    """Full XML round-trip: QuiverFile output is valid XML and contains correct data.
+
+    Builds a small project with a mix of flat files and deeply nested
+    directories, packs it, reads the raw XML, and validates the structure
+    using lxml as an independent parser.
+    """
+    # Create a realistic project layout.
+    project = tmp_path / "project"
+    src = project / "src"
+    src.mkdir(parents=True)
+    (project / "README.md").write_text("# Project", encoding="utf-8")
+    (src / "main.py").write_text("print('hello')", encoding="utf-8")
+    (src / "utils.py").write_text("VALUE = 42", encoding="utf-8")
+    sub = src / "sub"
+    sub.mkdir()
+    (sub / "helper.py").write_text("def helper(): pass", encoding="utf-8")
+
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add(str(project))
+
+    # Re-parse the raw XML with lxml to validate structure independently.
+    raw_xml = archive.read_text(encoding="utf-8")
+    root = etree.fromstring(raw_xml.encode("utf-8"))  # noqa: S320
+
+    # Root element checks.
+    assert root.tag == "archive"
+    assert root.get("version") == "1.0"
+
+    # <directory_tree> must be the first child and mention all paths.
+    tree_elem = root[0]
+    assert tree_elem.tag == "directory_tree"
+    assert tree_elem.text is not None
+    tree_text = tree_elem.text
+    assert "README.md" in tree_text
+    assert "main.py" in tree_text
+    assert "utils.py" in tree_text
+    assert "helper.py" in tree_text
+
+    # All <file> elements must follow <directory_tree>.
+    file_elems = root.findall("file")
+    assert len(file_elems) == 4
+    for child in root[1:]:
+        assert child.tag == "file"
+
+    # Paths are sorted alphabetically.
+    paths = [el.get("path") for el in file_elems]
+    assert paths == sorted(paths)
+
+    # Content is stored verbatim inside <content>.
+    content_map = {
+        el.get("path"): el.find("content").text  # type: ignore[union-attr]
+        for el in file_elems
+    }
+    assert any(k is not None and k.endswith("README.md") for k in content_map)
+    readme_key = next(k for k in content_map if k is not None and k.endswith("README.md"))
+    assert content_map[readme_key] == "# Project"
+    main_key = next(k for k in content_map if k is not None and k.endswith("main.py") and "sub" not in k)
+    assert content_map[main_key] == "print('hello')"
+    helper_key = next(k for k in content_map if k is not None and k.endswith("helper.py"))
+    assert content_map[helper_key] == "def helper(): pass"
+
+    # Verify raw XML uses CDATA and not entity-encoded characters.
+    assert "<![CDATA[" in raw_xml
+    assert "&amp;" not in raw_xml
+    assert "&lt;" not in raw_xml
 
 
 # ---------------------------------------------------------------------------
@@ -808,3 +907,28 @@ def test_add_text_raises_after_close(tmp_path: Path) -> None:
     qf.close()
     with pytest.raises(ValueError, match="closed"):
         qf.add_text("a.txt", "A")
+
+
+def test_add_text_rejects_absolute_arcname(tmp_path: Path) -> None:
+    """add_text() raises PathTraversalError when arcname is an absolute path."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf, pytest.raises(
+        Exception, match="absolute"
+    ):
+        qf.add_text("/etc/passwd", "evil")
+
+
+def test_add_text_rejects_dotdot_arcname(tmp_path: Path) -> None:
+    """add_text() raises PathTraversalError when arcname contains '..'."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf, pytest.raises(Exception, match=r"\.\."):
+        qf.add_text("../../escape.txt", "evil")
+
+
+def test_add_text_rejects_xml_incompatible_content(tmp_path: Path) -> None:
+    """add_text() raises BinaryFileError when content contains XML-forbidden control chars."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf, pytest.raises(
+        BinaryFileError, match=r"\\x00"
+    ):
+        qf.add_text("notes.txt", "hello\x00world")

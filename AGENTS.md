@@ -53,6 +53,8 @@ quiver/
 - **FS Rules:** Prioritize critical paths. Use `tmp_path`. Name staging dirs `project/` (avoids `src/src/` nesting).
 - **Paths:** Stored paths include top-level prefix (`project/src/main.py`). Assert via `endswith()` or `rglob()`.
 - **Upserts:** Merges compare **full stored paths**. Triggers require replacement file added from a dir matching original `add()` root.
+- **Public API only:** Never import or call private symbols (names starting with `_`) from `src/` in tests. Test behaviour exclusively through the public API.
+- **No inline imports:** All imports must be at the top of the test file. `import` statements inside test functions are forbidden.
 
 ## Tech Stack & Standards
 - **Runtime:** Python 3.12.3
