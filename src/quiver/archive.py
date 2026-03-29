@@ -783,7 +783,7 @@ class QuiverFile:
         self._entries.append((info, content))
         logger.debug("Added file", entry_path=stored_path, size=info.size)
 
-    def add_data(self, arcname: str, content: str) -> None:
+    def add_text(self, arcname: str, content: str) -> None:
         """Add an in-memory string as an archive entry.
 
         Upserts: if an entry with the same *arcname* already exists it is

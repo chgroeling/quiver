@@ -273,7 +273,7 @@ def _run_delete(
             os.close(tmp_fd)
             with QuiverFile.open(tmp_name, mode="w", preamble=preamble, epilogue=epilogue) as dst:
                 for info, content in filtered:
-                    dst.add_data(info.name, content)
+                    dst.add_text(info.name, content)
             Path(tmp_name).replace(archive_file)
         except Exception:
             with contextlib.suppress(OSError):

@@ -761,15 +761,15 @@ def test_entries_property_contains_info_and_content(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# QuiverFile.add_data()
+# QuiverFile.add_text()
 # ---------------------------------------------------------------------------
 
 
-def test_add_data_inserts_entry(tmp_path: Path) -> None:
-    """add_data() writes in-memory content into the archive."""
+def test_add_text_inserts_entry(tmp_path: Path) -> None:
+    """add_text() writes in-memory content into the archive."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_data("notes.txt", "some notes")
+        qf.add_text("notes.txt", "some notes")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert "notes.txt" in qf.getnames()
@@ -778,12 +778,12 @@ def test_add_data_inserts_entry(tmp_path: Path) -> None:
         assert info.size == len(b"some notes")
 
 
-def test_add_data_upserts_existing_entry(tmp_path: Path) -> None:
-    """add_data() replaces an existing entry with the same arcname."""
+def test_add_text_upserts_existing_entry(tmp_path: Path) -> None:
+    """add_text() replaces an existing entry with the same arcname."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_data("notes.txt", "old")
-        qf.add_data("notes.txt", "new")
+        qf.add_text("notes.txt", "old")
+        qf.add_text("notes.txt", "new")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.getnames().count("notes.txt") == 1
@@ -791,20 +791,20 @@ def test_add_data_upserts_existing_entry(tmp_path: Path) -> None:
         assert content == "new"
 
 
-def test_add_data_raises_in_read_mode(tmp_path: Path) -> None:
-    """add_data() raises ValueError when the archive is in read mode."""
+def test_add_text_raises_in_read_mode(tmp_path: Path) -> None:
+    """add_text() raises ValueError when the archive is in read mode."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_data("a.txt", "A")
+        qf.add_text("a.txt", "A")
 
     with QuiverFile.open(str(archive), mode="r") as qf, pytest.raises(ValueError, match="mode"):
-        qf.add_data("b.txt", "B")
+        qf.add_text("b.txt", "B")
 
 
-def test_add_data_raises_after_close(tmp_path: Path) -> None:
-    """add_data() raises ValueError when called after the archive is closed."""
+def test_add_text_raises_after_close(tmp_path: Path) -> None:
+    """add_text() raises ValueError when called after the archive is closed."""
     archive = tmp_path / "archive.xml"
     qf = QuiverFile.open(str(archive), mode="w")
     qf.close()
     with pytest.raises(ValueError, match="closed"):
-        qf.add_data("a.txt", "A")
+        qf.add_text("a.txt", "A")
