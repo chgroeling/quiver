@@ -23,7 +23,7 @@ def test_preamble_absent_when_none_given(tmp_path: Path) -> None:
     """An archive written without a preamble has no preamble on read-back."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("a.txt", "hi")
+        qf.writestr("a.txt", "hi")
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.preamble is None
 
@@ -32,7 +32,7 @@ def test_epilogue_absent_when_none_given(tmp_path: Path) -> None:
     """An archive written without an epilogue has no epilogue on read-back."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("a.txt", "hi")
+        qf.writestr("a.txt", "hi")
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.epilogue is None
 
@@ -43,7 +43,7 @@ def test_preamble_and_epilogue_round_trip(tmp_path: Path) -> None:
     with QuiverFile.open(
         str(archive), mode="w", preamble="Before text", epilogue="After text"
     ) as qf:
-        qf.add_text("a.txt", "hi")
+        qf.writestr("a.txt", "hi")
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.preamble == "Before text"
         assert qf.epilogue == "After text"
@@ -53,7 +53,7 @@ def test_first_archive_block_wins_multiple_blocks(tmp_path: Path) -> None:
     """When raw file content contains two <archive> blocks the second is treated as epilogue."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("a.txt", "A")
+        qf.writestr("a.txt", "A")
     # Append a second archive block as epilogue by rewriting the file directly.
     raw = archive.read_text(encoding="utf-8")
     second_block = '<archive version="1.0"><file path="b.txt"><content><![CDATA[B]]></content></file></archive>\n'
@@ -85,7 +85,7 @@ def test_preamble_sentinel_stripped_on_round_trip(tmp_path: Path) -> None:
     archive = tmp_path / "archive.xml"
     preamble_text = "My preamble"
     with QuiverFile.open(str(archive), mode="w", preamble=preamble_text) as qf:
-        qf.add_text("a.txt", "content")
+        qf.writestr("a.txt", "content")
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.preamble == preamble_text
 

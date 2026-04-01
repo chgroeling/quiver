@@ -494,9 +494,9 @@ def test_extractall_rejects_absolute_path_entry(tmp_path: Path) -> None:
     """extractall() raises PathTraversalError for an archive entry with an absolute path."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("safe.txt", "ok")
+        qf.writestr("safe.txt", "ok")
 
-    # Manually inject an absolute path that bypasses add_text normalization.
+    # Manually inject an absolute path that bypasses writestr normalization.
     raw = archive.read_text(encoding="utf-8")
     raw = raw.replace('path="safe.txt"', 'path="/etc/passwd"')
     archive.write_text(raw, encoding="utf-8")
@@ -510,10 +510,10 @@ def test_extractall_rejects_traversal_path_entry(tmp_path: Path) -> None:
     """extractall() raises PathTraversalError for an archive entry containing '..'."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("safe.txt", "ok")
+        qf.writestr("safe.txt", "ok")
 
     # Manually craft the raw XML to inject a traversal path that bypasses
-    # add()'s normalization (add_text also normalizes, so write the file directly).
+    # add()'s normalization (writestr also normalizes, so write the file directly).
     raw = archive.read_text(encoding="utf-8")
     raw = raw.replace('path="safe.txt"', 'path="../../escape.txt"')
     archive.write_text(raw, encoding="utf-8")
@@ -851,15 +851,15 @@ def test_epilogue_property_parsed_from_archive(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# QuiverFile.add_text()
+# QuiverFile.writestr()
 # ---------------------------------------------------------------------------
 
 
-def test_add_text_inserts_entry(tmp_path: Path) -> None:
-    """add_text() writes in-memory content into the archive."""
+def test_writestr_inserts_entry(tmp_path: Path) -> None:
+    """writestr() writes in-memory content into the archive."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("notes.txt", "some notes")
+        qf.writestr("notes.txt", "some notes")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert "notes.txt" in qf.namelist()
@@ -868,59 +868,70 @@ def test_add_text_inserts_entry(tmp_path: Path) -> None:
         assert info.size == len(b"some notes")
 
 
-def test_add_text_upserts_existing_entry(tmp_path: Path) -> None:
-    """add_text() replaces an existing entry with the same arcname."""
+def test_writestr_upserts_existing_entry(tmp_path: Path) -> None:
+    """writestr() replaces an existing entry with the same arcname."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("notes.txt", "old")
-        qf.add_text("notes.txt", "new")
+        qf.writestr("notes.txt", "old")
+        qf.writestr("notes.txt", "new")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.namelist().count("notes.txt") == 1
         assert qf.read("notes.txt") == "new"
 
 
-def test_add_text_raises_in_read_mode(tmp_path: Path) -> None:
-    """add_text() raises ValueError when the archive is in read mode."""
+def test_writestr_raises_in_read_mode(tmp_path: Path) -> None:
+    """writestr() raises ValueError when the archive is in read mode."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("a.txt", "A")
+        qf.writestr("a.txt", "A")
 
     with QuiverFile.open(str(archive), mode="r") as qf, pytest.raises(ValueError, match="mode"):
-        qf.add_text("b.txt", "B")
+        qf.writestr("b.txt", "B")
 
 
-def test_add_text_raises_after_close(tmp_path: Path) -> None:
-    """add_text() raises ValueError when called after the archive is closed."""
+def test_writestr_raises_after_close(tmp_path: Path) -> None:
+    """writestr() raises ValueError when called after the archive is closed."""
     archive = tmp_path / "archive.xml"
     qf = QuiverFile.open(str(archive), mode="w")
     qf.close()
     with pytest.raises(ValueError, match="closed"):
-        qf.add_text("a.txt", "A")
+        qf.writestr("a.txt", "A")
 
 
-def test_add_text_rejects_absolute_arcname(tmp_path: Path) -> None:
-    """add_text() raises PathTraversalError when arcname is an absolute path."""
+def test_writestr_rejects_absolute_arcname(tmp_path: Path) -> None:
+    """writestr() raises PathTraversalError when arcname is an absolute path."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf, pytest.raises(Exception, match="absolute"):
-        qf.add_text("/etc/passwd", "evil")
+        qf.writestr("/etc/passwd", "evil")
 
 
-def test_add_text_rejects_dotdot_arcname(tmp_path: Path) -> None:
-    """add_text() raises PathTraversalError when arcname contains '..'."""
+def test_writestr_rejects_dotdot_arcname(tmp_path: Path) -> None:
+    """writestr() raises PathTraversalError when arcname contains '..'."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf, pytest.raises(Exception, match=r"\.\."):
-        qf.add_text("../../escape.txt", "evil")
+        qf.writestr("../../escape.txt", "evil")
 
 
-def test_add_text_rejects_xml_incompatible_content(tmp_path: Path) -> None:
-    """add_text() raises BinaryFileError when content contains XML-forbidden control chars."""
+def test_writestr_rejects_xml_incompatible_content(tmp_path: Path) -> None:
+    """writestr() raises BinaryFileError when content contains XML-forbidden control chars."""
     archive = tmp_path / "archive.xml"
     with (
         QuiverFile.open(str(archive), mode="w") as qf,
         pytest.raises(BinaryFileError, match=r"\\x00"),
     ):
-        qf.add_text("notes.txt", "hello\x00world")
+        qf.writestr("notes.txt", "hello\x00world")
+
+
+def test_add_text_alias_emits_deprecation_warning(tmp_path: Path) -> None:
+    """add_text() remains available as a deprecated alias for writestr()."""
+    archive = tmp_path / "archive.xml"
+    with pytest.deprecated_call():
+        with QuiverFile.open(str(archive), mode="w") as qf:
+            qf.add_text("legacy.txt", "legacy")
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.read("legacy.txt") == "legacy"
 
 
 # ---------------------------------------------------------------------------
@@ -957,7 +968,7 @@ def test_read_missing_member_raises_keyerror(tmp_path: Path) -> None:
     """read() raises KeyError for a member name not in the archive."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("a.txt", "content")
+        qf.writestr("a.txt", "content")
 
     with (
         QuiverFile.open(str(archive), mode="r") as qf,
@@ -970,7 +981,7 @@ def test_read_in_write_mode(tmp_path: Path) -> None:
     """read() works in write mode for entries that have been added."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("memo.txt", "important")
+        qf.writestr("memo.txt", "important")
         assert qf.read("memo.txt") == "important"
 
 
@@ -978,8 +989,8 @@ def test_read_multiple_entries(tmp_path: Path) -> None:
     """read() returns the correct content for each entry."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("a.txt", "alpha")
-        qf.add_text("b.txt", "beta")
+        qf.writestr("a.txt", "alpha")
+        qf.writestr("b.txt", "beta")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         assert qf.read("a.txt") == "alpha"
@@ -995,8 +1006,8 @@ def test_iter_yields_quiverinfo_objects(tmp_path: Path) -> None:
     """Iterating over QuiverFile yields QuiverInfo objects."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("a.txt", "alpha")
-        qf.add_text("b.txt", "beta")
+        qf.writestr("a.txt", "alpha")
+        qf.writestr("b.txt", "beta")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         infos = list(qf)
@@ -1008,8 +1019,8 @@ def test_iter_names_match_namelist(tmp_path: Path) -> None:
     """Iteration yields entries in the same order as namelist()."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("x.txt", "x")
-        qf.add_text("y.txt", "y")
+        qf.writestr("x.txt", "x")
+        qf.writestr("y.txt", "y")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         iter_names = [info.name for info in qf]
@@ -1020,9 +1031,9 @@ def test_iter_then_read_roundtrip(tmp_path: Path) -> None:
     """Iterate, then read each entry — the canonical zipfile-style loop."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("a.txt", "alpha")
-        qf.add_text("b.txt", "beta")
-        qf.add_text("c.txt", "gamma")
+        qf.writestr("a.txt", "alpha")
+        qf.writestr("b.txt", "beta")
+        qf.writestr("c.txt", "gamma")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
         result = {info.name: qf.read(info) for info in qf}
@@ -1043,6 +1054,6 @@ def test_iter_in_write_mode(tmp_path: Path) -> None:
     """Iteration works in write mode over already-added entries."""
     archive = tmp_path / "archive.xml"
     with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.add_text("a.txt", "A")
+        qf.writestr("a.txt", "A")
         names = [info.name for info in qf]
     assert names == ["a.txt"]

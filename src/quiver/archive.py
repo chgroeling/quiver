@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import warnings
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -678,7 +679,7 @@ class QuiverFile:
         info = QuiverInfo(name=stored_path, size=size)
         self._register_source_entry(info, resolved_path)
 
-    def add_text(self, arcname: str, content: str) -> None:
+    def writestr(self, arcname: str, content: str) -> None:
         """Add an in-memory string as an archive entry.
 
         Upserts: if an entry with the same *arcname* already exists it is
@@ -718,6 +719,20 @@ class QuiverFile:
         info = QuiverInfo(name=stored_path, size=len(content.encode("utf-8")))
         self._cache_entry(info, content)
         logger.debug("Added data", entry_path=stored_path, size=info.size)
+
+    def add_text(self, arcname: str, content: str) -> None:
+        """Backward-compatible alias for `writestr`.
+
+        Args:
+            arcname: Stored path for the archive member.
+            content: UTF-8 text to store.
+        """
+        warnings.warn(
+            "QuiverFile.add_text() is deprecated; use QuiverFile.writestr() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.writestr(arcname, content)
 
     # ------------------------------------------------------------------
     # Read API

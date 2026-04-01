@@ -235,7 +235,7 @@ def _run_add(
                     tmp_name, mode="w", preamble=preamble, epilogue=epilogue
                 ) as dst:
                     for name, content in existing_entries:
-                        dst.add_text(name, content)
+                        dst.writestr(name, content)
                     for input_path in inputs:
                         dst.write(input_path)
                 Path(tmp_name).replace(archive_file)
@@ -319,7 +319,7 @@ def _run_delete(
             os.close(tmp_fd)
             with QuiverFile.open(tmp_name, mode="w", preamble=preamble, epilogue=epilogue) as dst:
                 for name, content in filtered:
-                    dst.add_text(name, content)
+                    dst.writestr(name, content)
             Path(tmp_name).replace(archive_file)
         except Exception:
             with contextlib.suppress(OSError):

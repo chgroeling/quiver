@@ -109,7 +109,7 @@ Public API mirrors `zipfile`. Entry: `quiver.open()`.
   - Normalizes POSIX paths; upserts in-memory metadata/content caches.
   - Preserves dir name as prefix (e.g., `write("dir")` -> `dir/file.txt`) unless `arcname` provided.
   - Uses async reader/writer with bounded backpressure.
-- **`add_text(arcname, content)`**:
+- **`writestr(arcname, content)`**:
   - Inserts an in-memory string as an archive entry (upserts by `arcname`).
   - Requires mode `'w'`. Useful for repack workflows.
 - **`preamble` / `epilogue`** (read-only properties): Return preamble/epilogue text parsed from or supplied to the archive (`None` if absent).
@@ -182,8 +182,8 @@ Style: `tar` (e.g., `quiver -cvf archive.xml src`)
 - **Extraction (`_ExtractPipeline`, L3.5):** Bounded `asyncio.Queue` streams `(path, content)` to concurrent workers that validate, create dirs (`to_thread`), and write (`aiofile`). Isolated XML parsed via `lxml.etree.fromstring`.
 - **Transactions (`__exit__`):** If `exc_type` exists, `QuiverFile.__exit__` sets `self._closed = True` without `close()`. Prevents corrupt/truncated archive on failed `write()` (matches `tarfile`).
 - **Modes ('r'/'w'):** Open `'r'` parses archive (`_parse_archive()`), recording offsets/lengths plus `_preamble`/`_epilogue` (raises `FileNotFoundError` if missing). Open `'w'` starts with empty metadata/content caches; `close()` serializes them to disk.
-- **Add/Upsert (CLI repack):** `-a` is not a Python API mode. The CLI opens the archive in `'r'` mode, streams metadata via iteration + `read()`, replays entries into a `'w'`-mode temp file via `add_text()`, adds new inputs via `add()`, then atomically replaces the original with `os.replace()`. When the archive does not exist, `-a` degrades to a plain `'w'` create. No partial writes can corrupt the archive.
-- **Delete (CLI repack):** `--delete` is not a Python API method. The CLI opens the archive in `'r'` mode, filters metadata using iteration + `read()`, writes the result to a sibling temp file via `'w'` mode + `add_text()`, then atomically replaces the original with `os.replace()`. No partial writes can corrupt the archive.
+- **Add/Upsert (CLI repack):** `-a` is not a Python API mode. The CLI opens the archive in `'r'` mode, streams metadata via iteration + `read()`, replays entries into a `'w'`-mode temp file via `writestr()`, adds new inputs via `add()`, then atomically replaces the original with `os.replace()`. When the archive does not exist, `-a` degrades to a plain `'w'` create. No partial writes can corrupt the archive.
+- **Delete (CLI repack):** `--delete` is not a Python API method. The CLI opens the archive in `'r'` mode, filters metadata using iteration + `read()`, writes the result to a sibling temp file via `'w'` mode + `writestr()`, then atomically replaces the original with `os.replace()`. No partial writes can corrupt the archive.
 - **Embedded Text & Sentinels (L0):** `_split_archive_text()` isolates *first* `<archive>`...`</archive>`; rest is preamble/epilogue (first-match rule). `_PREAMBLE_SENTINEL = "\n"`, `_EPILOGUE_SENTINEL = ""`. Sync required if changed.
 - **XML Specs:** Unescaped `<![CDATA[...]]>`, no entity encoding. `<directory_tree>` is first child, CDATA-wrapped (`"\n" + tree_text + "\n"`), `"."` if empty.
 - **lxml Artifact:** `pretty_print=True` appends `\n` after closing tag. `_split_archive_text` unconditionally strips exactly 1 leading `\n` from epilogue for verbatim round-trip. `xml_content` ends with `>`, not `\n`.
