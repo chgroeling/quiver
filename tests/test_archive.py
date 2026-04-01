@@ -165,11 +165,35 @@ def test_add_binary_file_raises(tmp_path: Path) -> None:
     binary.write_bytes(b"\xff\xfe\x00\x01")
     archive_path = tmp_path / "archive.xml"
 
-    with (
-        QuiverFile.open(str(archive_path), mode="w") as qf,
-        pytest.raises(BinaryFileError, match="UTF-8"),
-    ):
-        qf.write(str(binary))
+    with pytest.raises(BinaryFileError, match="UTF-8"):
+        with QuiverFile.open(str(archive_path), mode="w") as qf:
+            qf.write(str(binary))
+
+
+def test_write_defers_file_read_until_close(tmp_path: Path) -> None:
+    source = tmp_path / "lazy.txt"
+    source.write_text("first", encoding="utf-8")
+    archive_path = tmp_path / "archive.xml"
+
+    with QuiverFile.open(str(archive_path), mode="w") as qf:
+        qf.write(str(source))
+        source.write_text("second", encoding="utf-8")
+
+    with QuiverFile.open(str(archive_path), mode="r") as qf:
+        name = qf.namelist()[0]
+        assert name.endswith("lazy.txt")
+        assert qf.read(name) == "second"
+
+
+def test_read_in_write_mode_loads_from_disk(tmp_path: Path) -> None:
+    source = tmp_path / "memo.txt"
+    source.write_text("one", encoding="utf-8")
+    archive_path = tmp_path / "archive.xml"
+
+    with QuiverFile.open(str(archive_path), mode="w") as qf:
+        qf.write(str(source), arcname="notes/memo.txt")
+        source.write_text("two", encoding="utf-8")
+        assert qf.read("notes/memo.txt") == "two"
 
 
 # ---------------------------------------------------------------------------
@@ -178,16 +202,14 @@ def test_add_binary_file_raises(tmp_path: Path) -> None:
 
 
 def test_add_file_with_null_byte_raises(tmp_path: Path) -> None:
-    """A UTF-8 file containing a NULL byte must raise BinaryFileError at add() time."""
+    """A UTF-8 file containing a NULL byte must raise BinaryFileError."""
     bad = tmp_path / "null.txt"
     bad.write_bytes(b"hello\x00world")
     archive_path = tmp_path / "archive.xml"
 
-    with (
-        QuiverFile.open(str(archive_path), mode="w") as qf,
-        pytest.raises(BinaryFileError, match=r"\\x00"),
-    ):
-        qf.write(str(bad))
+    with pytest.raises(BinaryFileError, match=r"\\x00"):
+        with QuiverFile.open(str(archive_path), mode="w") as qf:
+            qf.write(str(bad))
 
 
 def test_add_file_with_control_char_raises(tmp_path: Path) -> None:
@@ -196,11 +218,9 @@ def test_add_file_with_control_char_raises(tmp_path: Path) -> None:
     bad.write_bytes(b"line one\nline two\x07bell")
     archive_path = tmp_path / "archive.xml"
 
-    with (
-        QuiverFile.open(str(archive_path), mode="w") as qf,
-        pytest.raises(BinaryFileError, match=r"\\x07"),
-    ):
-        qf.write(str(bad))
+    with pytest.raises(BinaryFileError, match=r"\\x07"):
+        with QuiverFile.open(str(archive_path), mode="w") as qf:
+            qf.write(str(bad))
 
 
 def test_xml_control_char_error_contains_file_path(tmp_path: Path) -> None:
@@ -209,11 +229,9 @@ def test_xml_control_char_error_contains_file_path(tmp_path: Path) -> None:
     bad.write_bytes(b"bad\x01byte")
     archive_path = tmp_path / "archive.xml"
 
-    with (
-        QuiverFile.open(str(archive_path), mode="w") as qf,
-        pytest.raises(BinaryFileError) as exc_info,
-    ):
-        qf.write(str(bad))
+    with pytest.raises(BinaryFileError) as exc_info:
+        with QuiverFile.open(str(archive_path), mode="w") as qf:
+            qf.write(str(bad))
 
     assert "offender.txt" in str(exc_info.value)
 
@@ -225,11 +243,9 @@ def test_xml_control_char_error_contains_line_and_col(tmp_path: Path) -> None:
     bad.write_bytes(b"first\nsec\x1fond")
     archive_path = tmp_path / "archive.xml"
 
-    with (
-        QuiverFile.open(str(archive_path), mode="w") as qf,
-        pytest.raises(BinaryFileError) as exc_info,
-    ):
-        qf.write(str(bad))
+    with pytest.raises(BinaryFileError) as exc_info:
+        with QuiverFile.open(str(archive_path), mode="w") as qf:
+            qf.write(str(bad))
 
     msg = str(exc_info.value)
     assert "line 2" in msg
@@ -244,11 +260,9 @@ def test_xml_control_char_error_multiple_occurrences(tmp_path: Path) -> None:
     bad.write_bytes(b"\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0c")
     archive_path = tmp_path / "archive.xml"
 
-    with (
-        QuiverFile.open(str(archive_path), mode="w") as qf,
-        pytest.raises(BinaryFileError) as exc_info,
-    ):
-        qf.write(str(bad))
+    with pytest.raises(BinaryFileError) as exc_info:
+        with QuiverFile.open(str(archive_path), mode="w") as qf:
+            qf.write(str(bad))
 
     msg = str(exc_info.value)
     # Should have at most 5 "line N, col M" entries.
@@ -257,7 +271,7 @@ def test_xml_control_char_error_multiple_occurrences(tmp_path: Path) -> None:
 
 
 def test_add_directory_with_control_char_file_raises(tmp_path: Path) -> None:
-    """async pipeline: a control-char file inside a packed directory raises BinaryFileError."""
+    """A control-char file inside a packed directory raises BinaryFileError."""
     project = tmp_path / "project"
     project.mkdir()
     (project / "ok.txt").write_text("clean", encoding="utf-8")
@@ -265,11 +279,9 @@ def test_add_directory_with_control_char_file_raises(tmp_path: Path) -> None:
     bad.write_bytes(b"text\x0bvt")
     archive_path = tmp_path / "archive.xml"
 
-    with (
-        QuiverFile.open(str(archive_path), mode="w") as qf,
-        pytest.raises(BinaryFileError, match=r"\\x0b"),
-    ):
-        qf.write(str(project))
+    with pytest.raises(BinaryFileError, match=r"\\x0b"):
+        with QuiverFile.open(str(archive_path), mode="w") as qf:
+            qf.write(str(project))
 
 
 def test_add_directory_recursively_packs_files(tmp_path: Path) -> None:
@@ -298,8 +310,9 @@ def test_add_directory_binary_file_raises(tmp_path: Path) -> None:
     (project / "bad.bin").write_bytes(b"\xff\xfe\x00")
 
     output = tmp_path / "archive.xml"
-    with QuiverFile.open(str(output), mode="w") as qf, pytest.raises(BinaryFileError):
-        qf.write(str(project))
+    with pytest.raises(BinaryFileError):
+        with QuiverFile.open(str(output), mode="w") as qf:
+            qf.write(str(project))
 
 
 def test_add_directory_arcname_prefixes_paths(tmp_path: Path) -> None:

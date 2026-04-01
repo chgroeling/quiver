@@ -8,8 +8,7 @@ Internal layer layout (top → bottom, no upward imports):
     Layer 0 — Constants & Exceptions
     Layer 1 — Path Normalization   (pure, no I/O)
     Layer 2 — I/O                 (file reading, directory walking)
-    Layer 3 — Async Pack Pipeline  (_PackPipeline)
-    Layer 3.5 — Async Extract Pipeline (_ExtractPipeline)
+    Layer 3 — Async Extract Pipeline (_ExtractPipeline)
     Layer 4 — XML Serialization   (string-building + regex, no asyncio)
     Layer 5 — Public API          (QuiverInfo, QuiverFile)
 """
@@ -20,7 +19,7 @@ import asyncio
 import re
 import time
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import structlog
 from aiofile import async_open
@@ -45,9 +44,9 @@ QUEUE_MAXSIZE = 64
 # Sentinels written at the preamble→XML and XML→epilogue seams.
 # Defined as constants so the marker can be changed in one place.
 # _PREAMBLE_SENTINEL is appended after the preamble so that <archive> always
-# starts on its own line.  _EPILOGUE_SENTINEL is empty because _build_xml_str
-# always ends the XML block with \n (after </archive>), which acts as the
-# natural separator before the epilogue.
+# starts on its own line.  _EPILOGUE_SENTINEL is empty because
+# _write_archive_stream() always ends the XML block with \n (after </archive>),
+# which acts as the natural separator before the epilogue.
 _PREAMBLE_SENTINEL = "\n"
 _EPILOGUE_SENTINEL = ""
 _PREAMBLE_SENTINEL_BYTES = _PREAMBLE_SENTINEL.encode("utf-8")
@@ -226,20 +225,6 @@ def _read_text_file(path: Path) -> str:
     return content
 
 
-async def _read_text_file_async(path: Path) -> str:
-    """Asynchronously read *path* as UTF-8 text.
-
-    Raises:
-        BinaryFileError: If the file cannot be decoded as UTF-8 or contains
-            XML-incompatible control characters.
-    """
-    async with async_open(path, "rb") as afp:
-        raw = cast("bytes", await afp.read())
-    content = _decode_utf8(raw, path)
-    _validate_xml_compatible(content, str(path))
-    return content
-
-
 def _collect_directory_files(directory_path: Path) -> list[Path]:
     """Collect all regular files under *directory_path* recursively."""
     return sorted(path for path in directory_path.rglob("*") if path.is_file())
@@ -369,111 +354,7 @@ def _parse_archive(archive_path: str) -> _ParseResult:
 
 
 # ===========================================================================
-# Layer 3 — Async Pack Pipeline
-# ===========================================================================
-
-
-class _PackPipeline:
-    """Bounded-queue async pipeline that reads a directory and returns entries.
-
-    Separates concurrency mechanics from `QuiverFile` so that the public
-    class stays free of asyncio internals.
-
-    Args:
-        root_dir: Root directory to pack.
-        arcname: Optional override prefix stored in the archive.
-    """
-
-    def __init__(self, root_dir: Path, arcname: str | None) -> None:
-        self._root_dir = root_dir
-        self._arcname = arcname
-        self._results: list[tuple[QuiverInfo, str]] = []
-
-    def run(self) -> list[tuple[QuiverInfo, str]]:
-        """Execute the pipeline synchronously and return collected entries."""
-        t0 = time.perf_counter()
-        asyncio.run(self._run_async())
-        elapsed = time.perf_counter() - t0
-        total_bytes = sum(info.size for info, _ in self._results)
-        logger.debug(
-            "Pack pipeline completed",
-            elapsed_s=round(elapsed, 4),
-            file_count=len(self._results),
-            total_bytes=total_bytes,
-        )
-        return self._results
-
-    async def _run_async(self) -> None:
-        """Coordinate bounded-queue async readers and a single writer task."""
-        files = _collect_directory_files(self._root_dir)
-        if not files:
-            return
-
-        worker_count = min(MAX_DIRECTORY_READERS, len(files))
-        file_queue: asyncio.Queue[Path | None] = asyncio.Queue()
-        data_queue: asyncio.Queue[tuple[QuiverInfo, str] | None] = asyncio.Queue(
-            maxsize=QUEUE_MAXSIZE
-        )
-
-        for file_path in files:
-            file_queue.put_nowait(file_path)
-        for _ in range(worker_count):
-            file_queue.put_nowait(None)
-
-        writer_task = asyncio.create_task(self._writer(data_queue))
-        reader_tasks = [
-            asyncio.create_task(self._reader_worker(file_queue, data_queue))
-            for _ in range(worker_count)
-        ]
-
-        try:
-            await asyncio.gather(*reader_tasks)
-        except Exception:
-            for task in reader_tasks:
-                task.cancel()
-            await asyncio.gather(*reader_tasks, return_exceptions=True)
-            writer_task.cancel()
-            await asyncio.gather(writer_task, return_exceptions=True)
-            raise
-
-        await data_queue.put(None)
-        await writer_task
-
-    async def _reader_worker(
-        self,
-        file_queue: asyncio.Queue[Path | None],
-        data_queue: asyncio.Queue[tuple[QuiverInfo, str] | None],
-    ) -> None:
-        """Read queued files and forward normalized entries to the writer."""
-        while True:
-            file_path = await file_queue.get()
-            if file_path is None:
-                file_queue.task_done()
-                return
-            try:
-                content = await _read_text_file_async(file_path)
-                relative = file_path.relative_to(self._root_dir)
-                stored_path = _directory_stored_path(relative=relative, arcname=self._arcname)
-                info = QuiverInfo(name=stored_path, size=len(content.encode("utf-8")))
-                await data_queue.put((info, content))
-                logger.debug("Added file", entry_path=stored_path, size=info.size)
-            finally:
-                file_queue.task_done()
-
-    async def _writer(
-        self,
-        data_queue: asyncio.Queue[tuple[QuiverInfo, str] | None],
-    ) -> None:
-        """Consume entries from the data queue and accumulate them."""
-        while True:
-            item = await data_queue.get()
-            if item is None:
-                return
-            self._results.append(item)
-
-
-# ===========================================================================
-# Layer 3.5 — Async Extract Pipeline
+# Layer 3 — Async Extract Pipeline
 # ===========================================================================
 
 
@@ -580,72 +461,6 @@ def _escape_cdata(content: str) -> str:
     return content.replace("]]>", "]]]]><![CDATA[>")
 
 
-def _build_xml_str(entries: list[tuple[QuiverInfo, str]]) -> str:
-    """Build the XML string for the archive without an XML parser.
-
-    Entries are sorted alphabetically by their stored POSIX path. A
-    ``<directory_tree>`` element is inserted as the first child of
-    ``<archive>``, containing a CDATA-wrapped visual tree of all packed paths.
-    Each ``<file>`` entry wraps its content in a CDATA section.
-
-    The returned string ends with ``\n`` (after ``</archive>``) to match the
-    behaviour of lxml ``pretty_print=True`` so that round-trip parsing via
-    [_split_archive_bytes][] and [_parse_archive][] is byte-identical.
-
-    Args:
-        entries: List of `(QuiverInfo, content)` pairs.
-
-    Returns:
-        The complete ``<archive>…</archive>\n`` XML string.
-    """
-    sorted_entries = sorted(entries, key=lambda e: e[0].name)
-    paths = [info.name for info, _ in sorted_entries]
-    tree_text = build_directory_tree(paths)
-
-    lines: list[str] = []
-    lines.append(f'<archive version="{ARCHIVE_VERSION}">')
-    lines.append(f"  <directory_tree><![CDATA[\n{tree_text}\n]]></directory_tree>")
-    for info, content in sorted_entries:
-        lines.append(f'  <file path="{info.name}">')
-        lines.append(f"    <content><![CDATA[{_escape_cdata(content)}]]></content>")
-        lines.append("  </file>")
-    lines.append("</archive>")
-    return "\n".join(lines) + "\n"
-
-
-def _write_archive(
-    output_path: str,
-    entries: list[tuple[QuiverInfo, str]],
-    preamble: str | None = None,
-    epilogue: str | None = None,
-) -> None:
-    """Serialize the XML archive to *output_path*.
-
-    Optionally wraps the XML with plain-text *preamble* and/or *epilogue*.
-    A single newline is inserted between the preamble and the opening
-    ``<archive>`` tag, and between the closing ``</archive>`` tag and the
-    epilogue, so that the boundaries are always on separate lines.
-
-    Args:
-        output_path: Destination file path.
-        entries: List of ``(QuiverInfo, content)`` pairs to include.
-        preamble: Optional text to prepend before the XML.
-        epilogue: Optional text to append after the XML.
-    """
-    xml_str = _build_xml_str(entries)
-
-    parts: list[str] = []
-    if preamble:
-        parts.append(preamble)
-        parts.append(_PREAMBLE_SENTINEL)
-    parts.append(xml_str)
-    if epilogue:
-        parts.append(_EPILOGUE_SENTINEL)
-        parts.append(epilogue)
-
-    Path(output_path).write_text("".join(parts), encoding="utf-8")
-
-
 # ===========================================================================
 # Layer 5 — Public API
 # ===========================================================================
@@ -724,6 +539,7 @@ class QuiverFile:
         self._members: list[QuiverInfo] = []
         self._member_map: dict[str, QuiverInfo] = {}
         self._content_cache: dict[str, str] = {}
+        self._source_map: dict[str, Path] = {}
         self._closed = False
         self._preamble: str | None = preamble
         self._epilogue: str | None = epilogue
@@ -818,7 +634,10 @@ class QuiverFile:
 
         Raises:
             FileNotFoundError: If *name* does not exist.
-            BinaryFileError: If *name* cannot be decoded as UTF-8 text.
+            BinaryFileError: If *name* cannot be decoded as UTF-8 text or contains
+                XML-incompatible control characters. Validation occurs when the
+                content is first read (either via [read][] or when [close][]
+                streams the entry into the archive).
             ValueError: If the archive is not open for writing, or if it has already been closed.
         """
         if self._mode != "w":
@@ -829,6 +648,8 @@ class QuiverFile:
         file_path = Path(name)
         if not file_path.exists():
             raise FileNotFoundError(f"No such file: {name!r}")
+
+        resolved_path = file_path.resolve()
 
         if file_path.is_dir():
             # When no arcname override is given, default to the directory's own
@@ -841,19 +662,21 @@ class QuiverFile:
                 effective_arcname = dir_name if dir_name else None
             else:
                 effective_arcname = arcname
-            entries = _PackPipeline(root_dir=file_path, arcname=effective_arcname).run()
-            # Upsert each packed entry: replace existing path matches, or append.
-            for new_info, new_content in entries:
-                self._cache_entry(new_info, new_content)
+            resolved_root = resolved_path
+            for child in _collect_directory_files(resolved_root):
+                relative = child.relative_to(resolved_root)
+                stored_path = _directory_stored_path(relative=relative, arcname=effective_arcname)
+                size = child.stat().st_size
+                info = QuiverInfo(name=stored_path, size=size)
+                self._register_source_entry(info, child)
             return
 
-        content = _read_text_file(file_path)
         stored_path = (
             _normalize_stored_path(arcname) if arcname is not None else _normalize_path(file_path)
         )
-        info = QuiverInfo(name=stored_path, size=len(content.encode("utf-8")))
-        self._cache_entry(info, content)
-        logger.debug("Added file", entry_path=stored_path, size=info.size)
+        size = resolved_path.stat().st_size
+        info = QuiverInfo(name=stored_path, size=size)
+        self._register_source_entry(info, resolved_path)
 
     def add_text(self, arcname: str, content: str) -> None:
         """Add an in-memory string as an archive entry.
@@ -942,6 +765,12 @@ class QuiverFile:
         cached = self._content_cache.get(target.name)
         if cached is not None:
             return cached
+
+        if self._mode == "w":
+            try:
+                return self._get_entry_content(target.name)
+            except ValueError as exc:  # pragma: no cover - defensive
+                raise KeyError(target.name) from exc
 
         if target._offset is None or target._length is None or self._archive_path is None:
             raise KeyError(target.name)
@@ -1032,7 +861,8 @@ class QuiverFile:
         """Close the archive, writing the XML file if in write mode.
 
         In `'w'` mode: sorts all added entries alphabetically, builds the XML
-        tree, and serializes it to the output file (creates or overwrites).
+        tree, lazily reads any pending filesystem sources, and serializes the
+        result to the output file (creates or overwrites).
         """
         if self._closed:
             return
@@ -1040,29 +870,88 @@ class QuiverFile:
 
         if self._mode == "w":
             t0 = time.perf_counter()
-            entries = self._entries_for_serialization()
-            _write_archive(self._name, entries, self._preamble, self._epilogue)
+            self._write_archive_stream()
             logger.debug(
                 "Archive written",
                 archive_name=self._name,
                 elapsed_s=round(time.perf_counter() - t0, 4),
-                entry_count=len(entries),
+                entry_count=len(self._members),
             )
 
     def _cache_entry(self, info: QuiverInfo, content: str) -> None:
         """Store *content* for *info*, upserting in write mode."""
 
-        self._content_cache[info.name] = content
+        stored_info = self._upsert_member(info)
+        self._content_cache[stored_info.name] = content
+        self._source_map.pop(stored_info.name, None)
+
+    def _register_source_entry(self, info: QuiverInfo, source: Path) -> None:
+        """Register a disk-backed entry that can be read lazily later."""
+
+        stored_info = self._upsert_member(info)
+        self._source_map[stored_info.name] = source
+        self._content_cache.pop(stored_info.name, None)
+        logger.debug("Added file", entry_path=stored_info.name, size=stored_info.size)
+
+    def _upsert_member(self, info: QuiverInfo) -> QuiverInfo:
         info._offset = None
         info._length = None
         existing = self._member_map.get(info.name)
         if existing is None:
             self._members.append(info)
             self._member_map[info.name] = info
-        else:
-            existing.size = info.size
-            existing._offset = None
-            existing._length = None
+            return info
+        existing.size = info.size
+        existing._offset = None
+        existing._length = None
+        return existing
+
+    def _get_entry_content(self, name: str) -> str:
+        """Return the text for *name*, reading from disk lazily if needed."""
+
+        cached = self._content_cache.get(name)
+        if cached is not None:
+            return cached
+
+        source = self._source_map.get(name)
+        if source is None:
+            raise ValueError(f"No cached content or source path for entry {name!r}")
+
+        content = _read_text_file(source)
+        self._content_cache[name] = content
+        info = self._member_map[name]
+        info.size = len(content.encode("utf-8"))
+        return content
+
+    def _write_archive_stream(self) -> None:
+        """Serialize the archive by streaming file contents lazily."""
+
+        sorted_infos = sorted(self._members, key=lambda info: info.name)
+        paths = [info.name for info in sorted_infos]
+        tree_text = build_directory_tree(paths)
+        output_path = Path(self._name)
+
+        with output_path.open("w", encoding="utf-8") as fp:
+            if self._preamble:
+                fp.write(self._preamble)
+                fp.write(_PREAMBLE_SENTINEL)
+
+            fp.write(f'<archive version="{ARCHIVE_VERSION}">\n')
+            fp.write(f"  <directory_tree><![CDATA[\n{tree_text}\n]]></directory_tree>\n")
+
+            for info in sorted_infos:
+                content = self._get_entry_content(info.name)
+                fp.write(f'  <file path="{info.name}">\n')
+                fp.write("    <content><![CDATA[")
+                fp.write(_escape_cdata(content))
+                fp.write("]]></content>\n")
+                fp.write("  </file>\n")
+
+            fp.write("</archive>\n")
+
+            if self._epilogue:
+                fp.write(_EPILOGUE_SENTINEL)
+                fp.write(self._epilogue)
 
     def _entries_for_serialization(self) -> list[tuple[QuiverInfo, str]]:
         entries: list[tuple[QuiverInfo, str]] = []
