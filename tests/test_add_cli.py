@@ -381,7 +381,7 @@ def test_add_missing_archive_creates_new(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert archive.exists()
     with QuiverFile.open(str(archive), mode="r") as qf:
-        assert any(n.endswith("b.txt") for n in qf.getnames())
+        assert any(n.endswith("b.txt") for n in qf.namelist())
 
 
 def test_add_missing_input_file_errors(tmp_path: Path) -> None:

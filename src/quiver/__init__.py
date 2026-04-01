@@ -23,7 +23,7 @@ def open(
 ) -> QuiverFile:
     """Open a quiver archive and return a [QuiverFile][] instance.
 
-    This is the top-level factory function, analogous to `tarfile.open`.
+    This is the top-level factory function, analogous to `zipfile.ZipFile`.
 
     Args:
         name: Path to the archive file.

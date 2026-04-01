@@ -11,8 +11,8 @@ Implement the core programmatic interface for the `quiver` package. Developers n
 
 ### 2.2. Metadata Methods
 The class must provide the following methods to inspect the archive:
-* `getnames() -> list[str]`: Returns a list of all normalized POSIX file paths contained in the archive.
-* `getmembers() -> list[QuiverInfo]`: Returns a list of `QuiverInfo` objects. 
+* `namelist() -> list[str]`: Returns a list of all normalized POSIX file paths contained in the archive.
+* `infolist() -> list[QuiverInfo]`: Returns a list of `QuiverInfo` objects. 
     * A `QuiverInfo` object must contain at least: `name` (the path) and `size` (the length of the extracted text content in bytes).
 
 ### 2.3. The Streaming Interface: `stream_content()`
@@ -29,7 +29,7 @@ from quiver import AsyncQuiverFile
 
 async def process_for_llm():
     async with AsyncQuiverFile("codebase.xml", mode="r") as aqf:
-        paths = aqf.getnames()
+        paths = aqf.namelist()
         if "src/main.py" in paths:
             # Stream directly to LLM or processing pipeline
             async for chunk in aqf.stream_content("src/main.py", chunk_size=1024):
@@ -42,10 +42,9 @@ asyncio.run(process_for_llm())
 All tests must run asynchronously (`pytest-asyncio`), use `pyfakefs`, and enforce strict typing.
 
 * [ ] **Test Context Manager:** The archive opens and closes cleanly, releasing all file handles.
-* [ ] **Test `getnames`:** Correctly returns a list of all file paths present in the archive, ignoring directories.
-* [ ] **Test `getmembers`:** Correctly returns `QuiverInfo` objects with accurate `name` and `size` properties.
+* [ ] **Test `namelist`:** Correctly returns a list of all file paths present in the archive, ignoring directories.
+* [ ] **Test `infolist`:** Correctly returns `QuiverInfo` objects with accurate `name` and `size` properties.
 * [ ] **Test `stream_content` Chunking:** Streaming a large text file correctly yields multiple chunks of the specified size. The concatenated chunks must perfectly match the original file content.
 * [ ] **Test File Not Found:** Requesting to stream a path that does not exist in the archive raises a clearly typed error.
 * [ ] **Test Embedded Archives:** The API correctly ignores `PREAMBLE` and `EPILOGUE` texts when opened in read mode.
 * [ ] **Type Checking:** The API classes, `QuiverInfo`, and the async generator logic pass `mypy --strict` without errors.
-

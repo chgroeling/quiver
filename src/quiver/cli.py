@@ -222,7 +222,7 @@ def _run_add(
         if archive_path.exists():
             # Repack: read existing archive, merge new inputs, write to temp, atomic rename.
             with QuiverFile.open(archive_file, mode="r") as src:
-                existing_entries = src.entries
+                existing_entries = [(info.name, src.read(info)) for info in src]
                 preamble = src.preamble
                 epilogue = src.epilogue
 
@@ -234,8 +234,8 @@ def _run_add(
                 with QuiverFile.open(
                     tmp_name, mode="w", preamble=preamble, epilogue=epilogue
                 ) as dst:
-                    for info, content in existing_entries:
-                        dst.add_text(info.name, content)
+                    for name, content in existing_entries:
+                        dst.add_text(name, content)
                     for input_path in inputs:
                         dst.write(input_path)
                 Path(tmp_name).replace(archive_file)
@@ -301,8 +301,12 @@ def _run_delete(
 
     try:
         with QuiverFile.open(archive_file, mode="r") as src:
-            all_entries = src.entries
-            filtered = [(info, content) for info, content in all_entries if _keep(info.name)]
+            filtered: list[tuple[str, str]] = []
+            original_count = 0
+            for info in src:
+                original_count += 1
+                if _keep(info.name):
+                    filtered.append((info.name, src.read(info)))
             preamble = src.preamble
             epilogue = src.epilogue
 
@@ -314,18 +318,19 @@ def _run_delete(
         try:
             os.close(tmp_fd)
             with QuiverFile.open(tmp_name, mode="w", preamble=preamble, epilogue=epilogue) as dst:
-                for info, content in filtered:
-                    dst.add_text(info.name, content)
+                for name, content in filtered:
+                    dst.add_text(name, content)
             Path(tmp_name).replace(archive_file)
         except Exception:
             with contextlib.suppress(OSError):
                 Path(tmp_name).unlink()
             raise
         kept_count = len(filtered)
+        deleted_count = original_count - kept_count
         logger.debug(
             "Delete repack completed",
             elapsed_s=round(time.perf_counter() - t0, 4),
-            deleted_count=len(all_entries) - kept_count,
+            deleted_count=deleted_count,
             kept_count=kept_count,
         )
     except FileNotFoundError as exc:

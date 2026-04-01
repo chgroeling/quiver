@@ -349,11 +349,11 @@ def test_close_is_idempotent(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# getnames() and getmembers()
+# namelist() and infolist()
 # ---------------------------------------------------------------------------
 
 
-def test_getnames_in_write_mode(tmp_path: Path) -> None:
+def test_namelist_in_write_mode(tmp_path: Path) -> None:
     a_file = tmp_path / "a.txt"
     b_file = tmp_path / "b.txt"
     a_file.write_text("a", encoding="utf-8")
@@ -363,19 +363,19 @@ def test_getnames_in_write_mode(tmp_path: Path) -> None:
     with QuiverFile.open(str(archive_path), mode="w") as qf:
         qf.write(str(a_file))
         qf.write(str(b_file))
-        names = qf.getnames()
+        names = qf.namelist()
     assert any(name.endswith("a.txt") for name in names)
     assert any(name.endswith("b.txt") for name in names)
 
 
-def test_getmembers_returns_quiverinfo_objects(tmp_path: Path) -> None:
+def test_infolist_returns_quiverinfo_objects(tmp_path: Path) -> None:
     sample = tmp_path / "sample.txt"
     sample.write_text("hello", encoding="utf-8")
     archive_path = tmp_path / "archive.xml"
 
     with QuiverFile.open(str(archive_path), mode="w") as qf:
         qf.write(str(sample))
-        members = qf.getmembers()
+        members = qf.infolist()
     assert len(members) == 1
     assert isinstance(members[0], QuiverInfo)
     assert members[0].name.endswith("sample.txt")
@@ -458,7 +458,7 @@ def test_extractall_with_members_filter(tmp_path: Path) -> None:
 
     dest = tmp_path / "out"
     with QuiverFile.open(str(archive), mode="r") as qf:
-        members = [m for m in qf.getmembers() if m.name.endswith("keep.txt")]
+        members = [m for m in qf.infolist() if m.name.endswith("keep.txt")]
         qf.extractall(path=str(dest), members=members)
 
     assert (dest / "src" / "keep.txt").exists()
@@ -528,7 +528,7 @@ def test_read_mode_round_trip(tmp_path: Path) -> None:
         qf.write(str(f2))
 
     with QuiverFile.open(str(archive), mode="r") as qf:
-        entry_map = {info.name: content for info, content in qf.entries}
+        entry_map = {info.name: qf.read(info) for info in qf}
     assert any(k.endswith("a.txt") for k in entry_map)
     assert any(k.endswith("b.txt") for k in entry_map)
     assert "alpha" in entry_map.values()
@@ -536,12 +536,12 @@ def test_read_mode_round_trip(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# getnames() and getmembers() in read mode
+# namelist() and infolist() in read mode
 # ---------------------------------------------------------------------------
 
 
-def test_getnames_read_mode(tmp_path: Path) -> None:
-    """getnames() works in read mode after archive is opened."""
+def test_namelist_read_mode(tmp_path: Path) -> None:
+    """namelist() works in read mode after archive is opened."""
     f = tmp_path / "sample.txt"
     f.write_text("hello", encoding="utf-8")
     archive = tmp_path / "archive.xml"
@@ -549,12 +549,12 @@ def test_getnames_read_mode(tmp_path: Path) -> None:
         qf.write(str(f))
 
     with QuiverFile.open(str(archive), mode="r") as qf:
-        names = qf.getnames()
+        names = qf.namelist()
     assert any(n.endswith("sample.txt") for n in names)
 
 
-def test_getmembers_read_mode(tmp_path: Path) -> None:
-    """getmembers() returns QuiverInfo objects in read mode."""
+def test_infolist_read_mode(tmp_path: Path) -> None:
+    """infolist() returns QuiverInfo objects in read mode."""
     f = tmp_path / "sample.txt"
     f.write_text("hello", encoding="utf-8")
     archive = tmp_path / "archive.xml"
@@ -562,7 +562,7 @@ def test_getmembers_read_mode(tmp_path: Path) -> None:
         qf.write(str(f))
 
     with QuiverFile.open(str(archive), mode="r") as qf:
-        members = qf.getmembers()
+        members = qf.infolist()
     assert len(members) == 1
     assert isinstance(members[0], QuiverInfo)
     assert members[0].size == len(b"hello")
@@ -588,7 +588,7 @@ def test_stored_path_uses_posix_separators(tmp_path: Path) -> None:
     with QuiverFile.open(str(archive), mode="w") as qf:
         qf.write(str(tmp_path / "project"))
     with QuiverFile.open(str(archive), mode="r") as qf:
-        names = qf.getnames()
+        names = qf.namelist()
     assert all("/" in n for n in names)
     assert all("\\" not in n for n in names)
 
@@ -601,7 +601,7 @@ def test_stored_path_is_relative(tmp_path: Path) -> None:
     with QuiverFile.open(str(archive), mode="w") as qf:
         qf.write(str(f))
     with QuiverFile.open(str(archive), mode="r") as qf:
-        names = qf.getnames()
+        names = qf.namelist()
     assert all(not n.startswith("/") for n in names)
 
 
@@ -613,7 +613,7 @@ def test_arcname_simple_filename_stored_as_is(tmp_path: Path) -> None:
     with QuiverFile.open(str(archive), mode="w") as qf:
         qf.write(str(f), arcname="simple.txt")
     with QuiverFile.open(str(archive), mode="r") as qf:
-        assert qf.getnames() == ["simple.txt"]
+        assert qf.namelist() == ["simple.txt"]
 
 
 # ---------------------------------------------------------------------------
@@ -837,34 +837,6 @@ def test_epilogue_property_parsed_from_archive(tmp_path: Path) -> None:
         assert qf.epilogue == "# footer\n"
 
 
-def test_entries_property_returns_defensive_copy(tmp_path: Path) -> None:
-    """entries returns a list; mutating it does not affect the archive."""
-    archive = tmp_path / "archive.xml"
-    f = tmp_path / "a.txt"
-    f.write_text("A", encoding="utf-8")
-    with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.write(str(f), arcname="a.txt")
-        copy = qf.entries
-        copy.clear()
-        assert len(qf.entries) == 1
-
-
-def test_entries_property_contains_info_and_content(tmp_path: Path) -> None:
-    """entries exposes (QuiverInfo, str) pairs with correct name and content."""
-    archive = tmp_path / "archive.xml"
-    f = tmp_path / "hello.txt"
-    f.write_text("world", encoding="utf-8")
-    with QuiverFile.open(str(archive), mode="w") as qf:
-        qf.write(str(f), arcname="hello.txt")
-
-    with QuiverFile.open(str(archive), mode="r") as qf:
-        pairs = qf.entries
-    assert len(pairs) == 1
-    info, content = pairs[0]
-    assert info.name == "hello.txt"
-    assert content == "world"
-
-
 # ---------------------------------------------------------------------------
 # QuiverFile.add_text()
 # ---------------------------------------------------------------------------
@@ -877,9 +849,9 @@ def test_add_text_inserts_entry(tmp_path: Path) -> None:
         qf.add_text("notes.txt", "some notes")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
-        assert "notes.txt" in qf.getnames()
-        info, content = qf.entries[0]
-        assert content == "some notes"
+        assert "notes.txt" in qf.namelist()
+        assert qf.read("notes.txt") == "some notes"
+        info = qf.infolist()[0]
         assert info.size == len(b"some notes")
 
 
@@ -891,9 +863,8 @@ def test_add_text_upserts_existing_entry(tmp_path: Path) -> None:
         qf.add_text("notes.txt", "new")
 
     with QuiverFile.open(str(archive), mode="r") as qf:
-        assert qf.getnames().count("notes.txt") == 1
-        _, content = qf.entries[0]
-        assert content == "new"
+        assert qf.namelist().count("notes.txt") == 1
+        assert qf.read("notes.txt") == "new"
 
 
 def test_add_text_raises_in_read_mode(tmp_path: Path) -> None:
@@ -937,3 +908,128 @@ def test_add_text_rejects_xml_incompatible_content(tmp_path: Path) -> None:
         pytest.raises(BinaryFileError, match=r"\\x00"),
     ):
         qf.add_text("notes.txt", "hello\x00world")
+
+
+# ---------------------------------------------------------------------------
+# read() — zipfile-style content access
+# ---------------------------------------------------------------------------
+
+
+def test_read_with_string_name(tmp_path: Path) -> None:
+    """read() returns content when given a string member name."""
+    f = tmp_path / "hello.txt"
+    f.write_text("hello world", encoding="utf-8")
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.write(str(f), arcname="hello.txt")
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.read("hello.txt") == "hello world"
+
+
+def test_read_with_quiverinfo(tmp_path: Path) -> None:
+    """read() returns content when given a QuiverInfo object."""
+    f = tmp_path / "data.txt"
+    f.write_text("payload", encoding="utf-8")
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.write(str(f), arcname="data.txt")
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        info = qf.infolist()[0]
+        assert qf.read(info) == "payload"
+
+
+def test_read_missing_member_raises_keyerror(tmp_path: Path) -> None:
+    """read() raises KeyError for a member name not in the archive."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("a.txt", "content")
+
+    with (
+        QuiverFile.open(str(archive), mode="r") as qf,
+        pytest.raises(KeyError, match="no_such.txt"),
+    ):
+        qf.read("no_such.txt")
+
+
+def test_read_in_write_mode(tmp_path: Path) -> None:
+    """read() works in write mode for entries that have been added."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("memo.txt", "important")
+        assert qf.read("memo.txt") == "important"
+
+
+def test_read_multiple_entries(tmp_path: Path) -> None:
+    """read() returns the correct content for each entry."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("a.txt", "alpha")
+        qf.add_text("b.txt", "beta")
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert qf.read("a.txt") == "alpha"
+        assert qf.read("b.txt") == "beta"
+
+
+# ---------------------------------------------------------------------------
+# __iter__ — iterate over QuiverInfo objects
+# ---------------------------------------------------------------------------
+
+
+def test_iter_yields_quiverinfo_objects(tmp_path: Path) -> None:
+    """Iterating over QuiverFile yields QuiverInfo objects."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("a.txt", "alpha")
+        qf.add_text("b.txt", "beta")
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        infos = list(qf)
+    assert len(infos) == 2
+    assert all(isinstance(i, QuiverInfo) for i in infos)
+
+
+def test_iter_names_match_namelist(tmp_path: Path) -> None:
+    """Iteration yields entries in the same order as namelist()."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("x.txt", "x")
+        qf.add_text("y.txt", "y")
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        iter_names = [info.name for info in qf]
+        assert iter_names == qf.namelist()
+
+
+def test_iter_then_read_roundtrip(tmp_path: Path) -> None:
+    """Iterate, then read each entry — the canonical zipfile-style loop."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("a.txt", "alpha")
+        qf.add_text("b.txt", "beta")
+        qf.add_text("c.txt", "gamma")
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        result = {info.name: qf.read(info) for info in qf}
+    assert result == {"a.txt": "alpha", "b.txt": "beta", "c.txt": "gamma"}
+
+
+def test_iter_empty_archive(tmp_path: Path) -> None:
+    """Iterating over an empty archive yields nothing."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w"):
+        pass
+
+    with QuiverFile.open(str(archive), mode="r") as qf:
+        assert list(qf) == []
+
+
+def test_iter_in_write_mode(tmp_path: Path) -> None:
+    """Iteration works in write mode over already-added entries."""
+    archive = tmp_path / "archive.xml"
+    with QuiverFile.open(str(archive), mode="w") as qf:
+        qf.add_text("a.txt", "A")
+        names = [info.name for info in qf]
+    assert names == ["a.txt"]

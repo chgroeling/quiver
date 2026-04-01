@@ -59,7 +59,7 @@ def test_first_archive_block_wins_multiple_blocks(tmp_path: Path) -> None:
     second_block = '<archive version="1.0"><file path="b.txt"><content><![CDATA[B]]></content></file></archive>\n'
     archive.write_text(raw + second_block, encoding="utf-8")
     with QuiverFile.open(str(archive), mode="r") as qf:
-        assert qf.getnames() == ["a.txt"]
+        assert qf.namelist() == ["a.txt"]
         assert qf.epilogue is not None
         assert "b.txt" in qf.epilogue
 

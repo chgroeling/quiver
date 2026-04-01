@@ -98,7 +98,7 @@ quiver/
 - **`asyncio.to_thread`:** Pass bound methods directly: `asyncio.to_thread(path.read_text, encoding="utf-8")`. Avoid lambdas to preserve return-type inference.
 
 ## Python API
-Public API mirrors `tarfile`. Entry: `quiver.open()`.
+Public API mirrors `zipfile`. Entry: `quiver.open()`.
 
 ### `QuiverFile` (`src/quiver/archive.py`)
 - **Factory**: `QuiverFile.open(name, mode, preamble=None, epilogue=None)`
@@ -106,16 +106,17 @@ Public API mirrors `tarfile`. Entry: `quiver.open()`.
 - **Context Manager**: Auto-calls `close()`.
 - **`write(name, arcname=None)`**:
   - Validates UTF-8 & XML-1.0 compatibility.
-  - Normalizes POSIX paths; upserts `self._entries`.
+  - Normalizes POSIX paths; upserts in-memory metadata/content caches.
   - Preserves dir name as prefix (e.g., `write("dir")` -> `dir/file.txt`) unless `arcname` provided.
   - Uses async reader/writer with bounded backpressure.
 - **`add_text(arcname, content)`**:
   - Inserts an in-memory string as an archive entry (upserts by `arcname`).
   - Requires mode `'w'`. Useful for repack workflows.
 - **`preamble` / `epilogue`** (read-only properties): Return preamble/epilogue text parsed from or supplied to the archive (`None` if absent).
-- **`entries`** (read-only property): Return a defensive copy of all `(QuiverInfo, content)` pairs in the archive.
-- **`close()`**: Sorts entries, builds `lxml` tree, writes to disk. **Aborts** if `__exit__` has propagating exception.
-- **`getnames()` / `getmembers()`**: Returns names or `QuiverInfo` objects.
+- **`close()`**: Sorts entries, builds XML, writes to disk. **Aborts** if `__exit__` has propagating exception.
+- **`namelist()` / `infolist()`**: Zipfile-style metadata accessors (names or `QuiverInfo` objects).
+- **`read(member)`**: Returns text content for a stored path or `QuiverInfo`. Lazily seeks/reads from disk in `'r'` mode; uses in-memory cache in `'w'` mode.
+- **Iteration**: `for info in QuiverFile:` yields `QuiverInfo` objects (no content) matching `zipfile.ZipFile` semantics.
 - **`extractall(path=".", members=None)`**:
   - Async pipeline extraction.
   - Validates sandbox paths.
@@ -180,9 +181,9 @@ Style: `tar` (e.g., `quiver -cvf archive.xml src`)
 - **Content Validation (L2):** Checks inside `_read_text_file[_async]()` raise `BinaryFileError`: 1) `_decode_utf8()` (rejects non-UTF-8). 2) `_validate_xml_compatible()` (rejects `[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x80-\x9F]`, max 5 errors reported) preventing late `lxml` serialization crash.
 - **Extraction (`_ExtractPipeline`, L3.5):** Bounded `asyncio.Queue` streams `(path, content)` to concurrent workers that validate, create dirs (`to_thread`), and write (`aiofile`). Isolated XML parsed via `lxml.etree.fromstring`.
 - **Transactions (`__exit__`):** If `exc_type` exists, `QuiverFile.__exit__` sets `self._closed = True` without `close()`. Prevents corrupt/truncated archive on failed `write()` (matches `tarfile`).
-- **Modes ('r'/'w'):** Open `'r'` parses archive (`_parse_archive()`), populating `_entries`, `_preamble`, `_epilogue` (raises `FileNotFoundError` if missing). Open `'w'` starts with an empty entry list; `close()` writes to disk.
-- **Add/Upsert (CLI repack):** `-a` is not a Python API mode. The CLI opens the archive in `'r'` mode, reads `entries`/`preamble`/`epilogue` via public properties, replays existing entries via `add_text()` into a `'w'`-mode temp file, adds new inputs via `add()` (upsert semantics handled in-memory), then atomically replaces the original with `os.replace()`. When the archive does not exist, `-a` degrades to a plain `'w'` create. No partial writes can corrupt the archive.
-- **Delete (CLI repack):** `--delete` is not a Python API method. The CLI opens the archive in `'r'` mode, reads `entries`/`preamble`/`epilogue` via public properties, filters entries, writes the result to a sibling temp file via `'w'` mode + `add_text()`, then atomically replaces the original with `os.replace()`. No partial writes can corrupt the archive.
+- **Modes ('r'/'w'):** Open `'r'` parses archive (`_parse_archive()`), recording offsets/lengths plus `_preamble`/`_epilogue` (raises `FileNotFoundError` if missing). Open `'w'` starts with empty metadata/content caches; `close()` serializes them to disk.
+- **Add/Upsert (CLI repack):** `-a` is not a Python API mode. The CLI opens the archive in `'r'` mode, streams metadata via iteration + `read()`, replays entries into a `'w'`-mode temp file via `add_text()`, adds new inputs via `add()`, then atomically replaces the original with `os.replace()`. When the archive does not exist, `-a` degrades to a plain `'w'` create. No partial writes can corrupt the archive.
+- **Delete (CLI repack):** `--delete` is not a Python API method. The CLI opens the archive in `'r'` mode, filters metadata using iteration + `read()`, writes the result to a sibling temp file via `'w'` mode + `add_text()`, then atomically replaces the original with `os.replace()`. No partial writes can corrupt the archive.
 - **Embedded Text & Sentinels (L0):** `_split_archive_text()` isolates *first* `<archive>`...`</archive>`; rest is preamble/epilogue (first-match rule). `_PREAMBLE_SENTINEL = "\n"`, `_EPILOGUE_SENTINEL = ""`. Sync required if changed.
 - **XML Specs:** Unescaped `<![CDATA[...]]>`, no entity encoding. `<directory_tree>` is first child, CDATA-wrapped (`"\n" + tree_text + "\n"`), `"."` if empty.
 - **lxml Artifact:** `pretty_print=True` appends `\n` after closing tag. `_split_archive_text` unconditionally strips exactly 1 leading `\n` from epilogue for verbatim round-trip. `xml_content` ends with `>`, not `\n`.

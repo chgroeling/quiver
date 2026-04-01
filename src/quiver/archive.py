@@ -1,6 +1,6 @@
 """Core archive API: QuiverFile and QuiverInfo.
 
-Provides a tarfile-like interface for packing and unpacking text files
+Provides a zipfile-like interface for packing and unpacking text files
 into the quiver XML archive format.
 
 Internal layer layout (top → bottom, no upward imports):
@@ -28,6 +28,7 @@ from aiofile import async_open
 from quiver.utils import build_directory_tree
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from types import TracebackType
 
 logger = structlog.get_logger(__name__)
@@ -49,6 +50,8 @@ QUEUE_MAXSIZE = 64
 # natural separator before the epilogue.
 _PREAMBLE_SENTINEL = "\n"
 _EPILOGUE_SENTINEL = ""
+_PREAMBLE_SENTINEL_BYTES = _PREAMBLE_SENTINEL.encode("utf-8")
+_EPILOGUE_SENTINEL_BYTES = _EPILOGUE_SENTINEL.encode("utf-8")
 
 
 class BinaryFileError(ValueError):
@@ -242,73 +245,76 @@ def _collect_directory_files(directory_path: Path) -> list[Path]:
     return sorted(path for path in directory_path.rglob("*") if path.is_file())
 
 
-# Matches the opening tag of the first <archive ...> element.
-_ARCHIVE_OPEN_RE = re.compile(r"<archive(?:\s[^>]*)?>")
-# Matches the first </archive> closing tag.
-_ARCHIVE_CLOSE_RE = re.compile(r"</archive>")
+# Matches the opening tag of the first <archive ...> element (bytes).
+_ARCHIVE_OPEN_RE_BYTES = re.compile(rb"<archive(?:\s[^>]*)?>")
+# Matches the first </archive> closing tag (bytes).
+_ARCHIVE_CLOSE_RE_BYTES = re.compile(rb"</archive>")
 
 
-def _split_archive_text(raw: str) -> tuple[str, str, str]:
-    """Split *raw* file content into preamble, XML, and epilogue.
+def _split_archive_bytes(raw: bytes) -> tuple[str, bytes, str, int]:
+    """Split *raw* bytes into preamble, XML (bytes), and epilogue.
 
-    Locates the first `<archive ...>` opening tag and the first `</archive>`
-    closing tag to isolate the embedded XML block.  Everything before the
-    opening tag is the preamble; everything after the closing tag is the
-    epilogue.
-
-    Args:
-        raw: Full text content of the archive file.
-
-    Returns:
-        A ``(preamble, xml_content, epilogue)`` triple where *xml_content*
-        is the full `<archive>…</archive>` string.
-
-    Raises:
-        ValueError: If no `<archive>` or `</archive>` tag can be found.
+    Returns the decoded preamble/epilogue strings alongside the raw
+    `<archive>…</archive>` bytes and the byte offset where the XML block
+    begins inside *raw*.
     """
-    open_match = _ARCHIVE_OPEN_RE.search(raw)
+
+    open_match = _ARCHIVE_OPEN_RE_BYTES.search(raw)
     if open_match is None:
         raise ValueError("No <archive> element found in file.")
 
-    close_match = _ARCHIVE_CLOSE_RE.search(raw, open_match.start())
+    close_match = _ARCHIVE_CLOSE_RE_BYTES.search(raw, open_match.start())
     if close_match is None:
         raise ValueError("No </archive> closing tag found in file.")
 
-    preamble = raw[: open_match.start()]
-    xml_content = raw[open_match.start() : close_match.end()]
-    epilogue = raw[close_match.end() :]
+    xml_start = open_match.start()
+    xml_end = close_match.end()
+    preamble_bytes = raw[:xml_start]
+    xml_bytes = raw[xml_start:xml_end]
+    epilogue_bytes = raw[xml_end:]
 
-    # Remove the sentinels injected by _write_archive, but only when the
-    # surrounding text is non-empty (no sentinel is written for absent
-    # preamble/epilogue, so stripping is skipped symmetrically).  Also skip
-    # stripping when the sentinel itself is empty (no-op sentinel).
-    if _PREAMBLE_SENTINEL and preamble and preamble.endswith(_PREAMBLE_SENTINEL):
-        preamble = preamble[: -len(_PREAMBLE_SENTINEL)]
-    if _EPILOGUE_SENTINEL and epilogue and epilogue.startswith(_EPILOGUE_SENTINEL):
-        epilogue = epilogue[len(_EPILOGUE_SENTINEL) :]
-    # _build_xml_str always appends \n after </archive>.  That \n lands at
-    # the start of the epilogue slice (not inside xml_content) and is a
-    # formatting artifact, not user content.  Strip exactly one leading \n so
-    # the epilogue round-trips verbatim.  Only strip when epilogue is non-empty
-    # to keep the no-epilogue path a no-op.
-    if epilogue.startswith("\n"):
-        epilogue = epilogue[1:]
+    if (
+        _PREAMBLE_SENTINEL_BYTES
+        and preamble_bytes
+        and preamble_bytes.endswith(_PREAMBLE_SENTINEL_BYTES)
+    ):
+        preamble_bytes = preamble_bytes[: -len(_PREAMBLE_SENTINEL_BYTES)]
+    if (
+        _EPILOGUE_SENTINEL_BYTES
+        and epilogue_bytes
+        and epilogue_bytes.startswith(_EPILOGUE_SENTINEL_BYTES)
+    ):
+        epilogue_bytes = epilogue_bytes[len(_EPILOGUE_SENTINEL_BYTES) :]
+    if epilogue_bytes.startswith(b"\n"):
+        epilogue_bytes = epilogue_bytes[1:]
 
-    return preamble, xml_content, epilogue
-
-
-type _ParseResult = tuple[list[tuple[str, str]], str, str]
+    preamble = preamble_bytes.decode("utf-8")
+    epilogue = epilogue_bytes.decode("utf-8")
+    return preamble, xml_bytes, epilogue, xml_start
 
 
-# Matches a single <file path="...">…</file> block.  The content CDATA is
-# captured lazily (re.DOTALL) so that multiple entries do not bleed together.
-_FILE_ENTRY_RE = re.compile(
-    r'<file\s+path="([^"]*)">'  # group 1 — stored path attribute
-    r"\s*<content>"  # opening <content> tag
-    r"(?:<!\[CDATA\[(.*?)\]\]>|"  # group 2 — CDATA block (may be absent)
-    r"([^<]*))"  # group 3 — plain text (empty element)
-    r"\s*</content>"  # closing </content> tag
-    r"\s*</file>",  # closing </file> tag
+type _ParsedEntry = tuple[str, int, int, int]
+type _ParseResult = tuple[list[_ParsedEntry], str, str]
+
+
+def _read_content_at(archive_path: Path, offset: int, length: int) -> str:
+    """Read and unescape raw content stored at *offset* within *archive_path*."""
+
+    with archive_path.open("rb") as fp:
+        fp.seek(offset)
+        raw_bytes = fp.read(length)
+    text = raw_bytes.decode("utf-8")
+    return _unescape_cdata(text)
+
+
+# Matches a single <file path="...">…</file> block in bytes form.
+_FILE_ENTRY_RE_BYTES = re.compile(
+    rb'<file\s+path="([^"]*)">'  # group 1 — stored path attribute
+    rb"\s*<content>"  # opening <content> tag
+    rb"(?:<!\[CDATA\[(.*?)\]\]>|"  # group 2 — CDATA block (may be absent)
+    rb"([^<]*))"  # group 3 — plain text (empty element)
+    rb"\s*</content>"  # closing </content> tag
+    rb"\s*</file>",  # closing </file> tag
     re.DOTALL,
 )
 
@@ -327,7 +333,7 @@ def _parse_archive(archive_path: str) -> _ParseResult:
     """Parse a quiver XML archive and return its file entries with surrounding text.
 
     Reads the raw file, splits out any preamble and epilogue via
-    [_split_archive_text][], then extracts ``<file>`` entries from the XML
+    [_split_archive_bytes][], then extracts ``<file>`` entries from the XML
     block using regex — no XML parser required.
 
     Args:
@@ -335,24 +341,29 @@ def _parse_archive(archive_path: str) -> _ParseResult:
 
     Returns:
         A tuple of ``(entries, preamble, epilogue)`` where *entries* is a list
-        of ``(stored_path, content)`` pairs in document order, *preamble* is
-        the raw text before the first ``<archive>`` tag, and *epilogue* is the
-        raw text after the first ``</archive>`` tag.
+        of ``(stored_path, size, byte_offset, byte_length)`` tuples in document
+        order; *preamble* is the raw text before the first ``<archive>`` tag;
+        *epilogue* is the raw text after the first ``</archive>`` tag.
 
     Raises:
         FileNotFoundError: If *archive_path* does not exist.
         ValueError: If no ``<archive>`` element is found.
     """
-    raw = Path(archive_path).read_text(encoding="utf-8")
-    preamble, xml_content, epilogue = _split_archive_text(raw)
+    raw_bytes = Path(archive_path).read_bytes()
+    preamble, xml_bytes, epilogue, xml_start = _split_archive_bytes(raw_bytes)
 
-    entries: list[tuple[str, str]] = []
-    for m in _FILE_ENTRY_RE.finditer(xml_content):
-        stored_path = m.group(1)
-        # group 2 is set when a CDATA block is present; group 3 covers plain text.
-        raw_content = m.group(2) if m.group(2) is not None else (m.group(3) or "")
-        content = _unescape_cdata(raw_content)
-        entries.append((stored_path, content))
+    entries: list[_ParsedEntry] = []
+    for match in _FILE_ENTRY_RE_BYTES.finditer(xml_bytes):
+        stored_path = match.group(1).decode("utf-8")
+        content_group = 2 if match.group(2) is not None else 3
+        raw_content_bytes = match.group(content_group) or b""
+        raw_content_text = raw_content_bytes.decode("utf-8")
+        unescaped = _unescape_cdata(raw_content_text)
+        size = len(unescaped.encode("utf-8"))
+        local_start, local_end = match.span(content_group)
+        byte_start = xml_start + local_start
+        byte_length = local_end - local_start
+        entries.append((stored_path, size, byte_start, byte_length))
 
     return entries, preamble, epilogue
 
@@ -579,7 +590,7 @@ def _build_xml_str(entries: list[tuple[QuiverInfo, str]]) -> str:
 
     The returned string ends with ``\n`` (after ``</archive>``) to match the
     behaviour of lxml ``pretty_print=True`` so that round-trip parsing via
-    [_split_archive_text][] and [_parse_archive][] is byte-identical.
+    [_split_archive_bytes][] and [_parse_archive][] is byte-identical.
 
     Args:
         entries: List of `(QuiverInfo, content)` pairs.
@@ -645,12 +656,21 @@ class QuiverInfo:
 
     Attributes:
         name: Normalized POSIX path of the file.
-        size: Size of the file content in bytes.
+        size: Size of the (unescaped) file content in bytes.
     """
 
-    def __init__(self, name: str, size: int) -> None:
+    def __init__(
+        self,
+        name: str,
+        size: int,
+        *,
+        _offset: int | None = None,
+        _length: int | None = None,
+    ) -> None:
         self.name = name
         self.size = size
+        self._offset = _offset
+        self._length = _length
 
     def isfile(self) -> bool:
         """Return True — all current quiver entries are files."""
@@ -667,7 +687,7 @@ class QuiverInfo:
 class QuiverFile:
     """Central archive class for reading and writing quiver XML archives.
 
-    Analogous to `tarfile.TarFile`. Use the [open][QuiverFile.open] factory
+    Analogous to `zipfile.ZipFile`. Use the [open][QuiverFile.open] factory
     method or the module-level `quiver.open` function to create instances.
 
     Supported modes:
@@ -679,6 +699,12 @@ class QuiverFile:
         with QuiverFile.open("archive.xml", mode="w") as qf:
             qf.write("README.md")
             qf.write("src/main.py", arcname="main.py")
+        ```
+
+        ```python
+        with QuiverFile.open("archive.xml", mode="r") as qf:
+            for info in qf:
+                content = qf.read(info)
         ```
     """
 
@@ -695,10 +721,13 @@ class QuiverFile:
             )
         self._name = name
         self._mode = mode
-        self._entries: list[tuple[QuiverInfo, str]] = []
+        self._members: list[QuiverInfo] = []
+        self._member_map: dict[str, QuiverInfo] = {}
+        self._content_cache: dict[str, str] = {}
         self._closed = False
         self._preamble: str | None = preamble
         self._epilogue: str | None = epilogue
+        self._archive_path: Path | None = None
         logger.debug("QuiverFile opened", archive_name=name, mode=mode)
 
         if mode == "r":
@@ -709,10 +738,16 @@ class QuiverFile:
             raw_entries, parsed_preamble, parsed_epilogue = _parse_archive(name)
             self._preamble = parsed_preamble if parsed_preamble.strip() else None
             self._epilogue = parsed_epilogue if parsed_epilogue.strip() else None
-            self._entries = [
-                (QuiverInfo(name=stored_path, size=len(content.encode("utf-8"))), content)
-                for stored_path, content in raw_entries
-            ]
+            self._archive_path = archive_path
+            for stored_path, size, byte_offset, byte_length in raw_entries:
+                info = QuiverInfo(
+                    name=stored_path,
+                    size=size,
+                    _offset=byte_offset,
+                    _length=byte_length,
+                )
+                self._members.append(info)
+                self._member_map[stored_path] = info
             logger.debug(
                 "Archive parsed",
                 archive_name=name,
@@ -808,12 +843,8 @@ class QuiverFile:
                 effective_arcname = arcname
             entries = _PackPipeline(root_dir=file_path, arcname=effective_arcname).run()
             # Upsert each packed entry: replace existing path matches, or append.
-            existing_by_path = {info.name: i for i, (info, _) in enumerate(self._entries)}
             for new_info, new_content in entries:
-                if new_info.name in existing_by_path:
-                    self._entries[existing_by_path[new_info.name]] = (new_info, new_content)
-                else:
-                    self._entries.append((new_info, new_content))
+                self._cache_entry(new_info, new_content)
             return
 
         content = _read_text_file(file_path)
@@ -821,13 +852,7 @@ class QuiverFile:
             _normalize_stored_path(arcname) if arcname is not None else _normalize_path(file_path)
         )
         info = QuiverInfo(name=stored_path, size=len(content.encode("utf-8")))
-        # Upsert: replace an existing entry with the same path, or append.
-        for i, (existing_info, _) in enumerate(self._entries):
-            if existing_info.name == stored_path:
-                self._entries[i] = (info, content)
-                logger.debug("Added file", entry_path=stored_path, size=info.size)
-                return
-        self._entries.append((info, content))
+        self._cache_entry(info, content)
         logger.debug("Added file", entry_path=stored_path, size=info.size)
 
     def add_text(self, arcname: str, content: str) -> None:
@@ -868,12 +893,7 @@ class QuiverFile:
 
         stored_path = _normalize_stored_path(arcname)
         info = QuiverInfo(name=stored_path, size=len(content.encode("utf-8")))
-        for i, (existing_info, _) in enumerate(self._entries):
-            if existing_info.name == stored_path:
-                self._entries[i] = (info, content)
-                logger.debug("Added data", entry_path=stored_path, size=info.size)
-                return
-        self._entries.append((info, content))
+        self._cache_entry(info, content)
         logger.debug("Added data", entry_path=stored_path, size=info.size)
 
     # ------------------------------------------------------------------
@@ -890,24 +910,64 @@ class QuiverFile:
         """Return the epilogue text parsed from or supplied to the archive."""
         return self._epilogue
 
-    @property
-    def entries(self) -> list[tuple[QuiverInfo, str]]:
-        """Return a defensive copy of all `(QuiverInfo, content)` pairs."""
-        return list(self._entries)
-
-    def getnames(self) -> list[str]:
+    def namelist(self) -> list[str]:
         """Return a list of archive member paths.
 
-        Returns the paths of all files in the archive, regardless of mode.
+        Analogous to `zipfile.ZipFile.namelist`.
         """
-        return [info.name for info, _ in self._entries]
+        return [info.name for info in self._members]
 
-    def getmembers(self) -> list[QuiverInfo]:
+    def infolist(self) -> list[QuiverInfo]:
         """Return a list of [QuiverInfo][] objects for all archive members.
 
-        Returns metadata for all files in the archive, regardless of mode.
+        Analogous to `zipfile.ZipFile.infolist`.
         """
-        return [info for info, _ in self._entries]
+        return list(self._members)
+
+    def read(self, member: str | QuiverInfo) -> str:
+        """Return the content of an archive member as a string.
+
+        Analogous to `zipfile.ZipFile.read`, but returns `str` instead of
+        `bytes` because quiver archives contain only UTF-8 text.
+
+        Args:
+            member: The member to read — either a stored path (`str`) or
+                a [QuiverInfo][] object obtained from [infolist][] or
+                iteration.
+
+        Raises:
+            KeyError: If no entry with the given name exists in the archive.
+        """
+        target = self._resolve_member(member)
+        cached = self._content_cache.get(target.name)
+        if cached is not None:
+            return cached
+
+        if target._offset is None or target._length is None or self._archive_path is None:
+            raise KeyError(target.name)
+
+        content = _read_content_at(self._archive_path, target._offset, target._length)
+        return content
+
+    def __iter__(self) -> Iterator[QuiverInfo]:
+        """Iterate over archive members, yielding [QuiverInfo][] objects.
+
+        Example:
+            ```python
+            with quiver.open("archive.xml", mode="r") as qf:
+                for info in qf:
+                    content = qf.read(info)
+            ```
+        """
+        return iter(self._members)
+
+    def _resolve_member(self, member: str | QuiverInfo) -> QuiverInfo:
+        if isinstance(member, QuiverInfo):
+            return member
+        try:
+            return self._member_map[member]
+        except KeyError:
+            raise KeyError(member) from None
 
     def extractall(
         self,
@@ -923,7 +983,7 @@ class QuiverFile:
         Args:
             path: Destination directory. Defaults to the current directory.
             members: If given, only these [QuiverInfo][] members are extracted.
-                Must be a subset of [getmembers][].
+                Must be a subset of [infolist][].
 
         Raises:
             ValueError: If the archive is not open in read mode.
@@ -941,11 +1001,11 @@ class QuiverFile:
         allowed_names: set[str] | None = (
             {info.name for info in members} if members is not None else None
         )
-        entries = [
-            (info.name, content)
-            for info, content in self._entries
-            if allowed_names is None or info.name in allowed_names
-        ]
+        entries: list[tuple[str, str]] = []
+        for info in self._members:
+            if allowed_names is not None and info.name not in allowed_names:
+                continue
+            entries.append((info.name, self.read(info)))
 
         _ExtractPipeline(entries=entries, destination=destination).run()
         self._write_surrounding_text(destination)
@@ -980,10 +1040,35 @@ class QuiverFile:
 
         if self._mode == "w":
             t0 = time.perf_counter()
-            _write_archive(self._name, self._entries, self._preamble, self._epilogue)
+            entries = self._entries_for_serialization()
+            _write_archive(self._name, entries, self._preamble, self._epilogue)
             logger.debug(
                 "Archive written",
                 archive_name=self._name,
                 elapsed_s=round(time.perf_counter() - t0, 4),
-                entry_count=len(self._entries),
+                entry_count=len(entries),
             )
+
+    def _cache_entry(self, info: QuiverInfo, content: str) -> None:
+        """Store *content* for *info*, upserting in write mode."""
+
+        self._content_cache[info.name] = content
+        info._offset = None
+        info._length = None
+        existing = self._member_map.get(info.name)
+        if existing is None:
+            self._members.append(info)
+            self._member_map[info.name] = info
+        else:
+            existing.size = info.size
+            existing._offset = None
+            existing._length = None
+
+    def _entries_for_serialization(self) -> list[tuple[QuiverInfo, str]]:
+        entries: list[tuple[QuiverInfo, str]] = []
+        for info in self._members:
+            content = self._content_cache.get(info.name)
+            if content is None:
+                raise ValueError(f"Cannot serialize entry without cached content: {info.name}")
+            entries.append((info, content))
+        return entries
