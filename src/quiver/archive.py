@@ -526,14 +526,6 @@ def _escape_cdata(content: str) -> str:
     return content.replace("]]>", "]]]]><![CDATA[>")
 
 
-def _payload_length_for_text(content: str) -> int:
-    """Return the byte length of *content* once embedded inside CDATA."""
-
-    escaped = _escape_cdata(content)
-    # `_escape_cdata` only inserts ASCII characters, so len(str) == len(bytes).
-    return len(escaped)
-
-
 # ===========================================================================
 # Layer 5 — Public API
 # ===========================================================================
@@ -1005,7 +997,7 @@ class QuiverFile:
         stored_info = self._upsert_member(info)
         self._content_cache[stored_info.name] = content
         self._source_map.pop(stored_info.name, None)
-        stored_info.length = _payload_length_for_text(content)
+        stored_info.length = len(_escape_cdata(content).encode("utf-8"))
 
     def _register_source_entry(self, info: QuiverInfo, source: Path) -> None:
         """Register a disk-backed entry that can be read lazily later."""
@@ -1040,7 +1032,7 @@ class QuiverFile:
         content = _read_text_file(source)
         self._content_cache[name] = content
         info = self._member_map[name]
-        info.length = _payload_length_for_text(content)
+        info.length = len(_escape_cdata(content).encode("utf-8"))
         return content
 
     def _write_archive_stream(self) -> None:
