@@ -222,7 +222,7 @@ def _run_add(
         if archive_path.exists():
             # Repack: read existing archive, merge new inputs, write to temp, atomic rename.
             with QuiverFile.open(archive_file, mode="r") as src:
-                existing_entries = [(info.name, src.read(info)) for info in src]
+                existing_entries = [(info.name, src.readstr(info)) for info in src]
                 preamble = src.preamble
                 epilogue = src.epilogue
 
@@ -306,7 +306,7 @@ def _run_delete(
             for info in src:
                 original_count += 1
                 if _keep(info.name):
-                    filtered.append((info.name, src.read(info)))
+                    filtered.append((info.name, src.readstr(info)))
             preamble = src.preamble
             epilogue = src.epilogue
 

@@ -16,7 +16,7 @@ Quiver bundles text file directories into a plain text archive with an embedded 
 
 - **Human-readable XML** — archives are plain text, Git-friendly, and inspectable with any editor
 - **Embedded directory tree** — every archive contains a visual `tree`-style directory listing
-- **`zipfile`-compatible Python API** — familiar `open()`, `write()`, `read()`, `extractall()`, `namelist()`, iteration
+- **`zipfile`-compatible Python API** — familiar `open()`, `write()`, `readstr()`, `read()`, `extractall()`, `namelist()`, iteration
 - **`tar`-style CLI** — bundled flags (`-cvf`), create/extract/add/delete modes
 - **Preamble & epilogue support** — attach arbitrary text before and after the XML block
 - **Secure extraction** — sandboxed unpack with path traversal prevention
@@ -212,21 +212,36 @@ with quiver.open("archive.xml", mode="w") as qf:
 ### Reading
 
 ```python
+import io
+
 with quiver.open("archive.xml", mode="r") as qf:
     # List members
     names = qf.namelist()
 
-    # Read a specific file
-    content = qf.read("src/main.py")
+    # Read as string (text)
+    content = qf.readstr("src/main.py")
+
+    # Read as bytes (raw)
+    raw_bytes = qf.read("src/main.py")
 
     # Iterate with metadata
     for info in qf:
         if info.isfile():
-            content = qf.read(info)
+            text = qf.readstr(info)
+            data = qf.read(info)
 
     # Access preamble/epilogue
     print(qf.preamble)
     print(qf.epilogue)
+
+# File-like object support (read or write mode)
+with io.BytesIO() as buffer:
+    with quiver.open(buffer, mode="w") as qf:
+        qf.writestr("test.txt", "hello")
+
+    buffer.seek(0)  # Rewind to read
+    with quiver.open(buffer, mode="r") as qf:
+        print(qf.readstr("test.txt"))  # "hello"
 ```
 
 ### Extraction

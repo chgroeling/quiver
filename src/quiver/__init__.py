@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import IO
+
 from quiver.archive import BinaryFileError, PathTraversalError, QuiverFile, QuiverInfo
 
 __version__ = "0.1.0"
@@ -16,7 +18,7 @@ __all__ = [
 
 
 def open(
-    name: str,
+    name: str | IO[bytes],
     mode: str = "r",
     preamble: str | None = None,
     epilogue: str | None = None,

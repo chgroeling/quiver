@@ -16,11 +16,11 @@ Internal layer layout (top → bottom, no upward imports):
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 import time
-import warnings
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 import structlog
 from aiofile import async_open
@@ -304,15 +304,14 @@ def _unescape_cdata(raw_cdata: str) -> str:
     return raw_cdata.replace("]]]]><![CDATA[>", "]]>")
 
 
-def _parse_archive(archive_path: str) -> _ParseResult:
-    """Parse a quiver XML archive and return its file entries with surrounding text.
+def _parse_archive_bytes(raw_bytes: bytes) -> _ParseResult:
+    """Parse a quiver XML archive from raw bytes and return its file entries.
 
-    Reads the raw file, splits out any preamble and epilogue via
-    [_split_archive_bytes][], then extracts ``<file>`` entries from the XML
-    block using regex — no XML parser required.
+    Splits out any preamble and epilogue via [_split_archive_bytes][], then
+    extracts ``<file>`` entries from the XML block using regex.
 
     Args:
-        archive_path: Filesystem path to the quiver XML archive.
+        raw_bytes: Raw bytes of the archive file.
 
     Returns:
         A tuple of ``(entries, preamble, epilogue, raw_bytes_view)`` where *entries*
@@ -322,10 +321,8 @@ def _parse_archive(archive_path: str) -> _ParseResult:
         *raw_bytes_view* is a read-only :class:`memoryview` of the entire archive.
 
     Raises:
-        FileNotFoundError: If *archive_path* does not exist.
         ValueError: If no ``<archive>`` element is found.
     """
-    raw_bytes = Path(archive_path).read_bytes()
     preamble, xml_bytes, epilogue, xml_start = _split_archive_bytes(raw_bytes)
 
     entries: list[_ParsedEntry] = []
@@ -408,7 +405,7 @@ class _ExtractPipeline:
     async def _writer_worker(self, entries: list[QuiverInfo]) -> None:
         """Write each entry in *entries* to disk."""
         for info in entries:
-            content = self._quiver_file.read(info)
+            content = self._quiver_file.readstr(info)
             target = _validate_extraction_path(info.name, self._destination)
             await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
             async with async_open(target, "w", encoding="utf-8") as afp:
@@ -504,7 +501,7 @@ class QuiverFile:
 
     def __init__(
         self,
-        name: str,
+        name: str | IO[bytes],
         mode: str = "r",
         preamble: str | None = None,
         epilogue: str | None = None,
@@ -523,14 +520,26 @@ class QuiverFile:
         self._preamble: str | None = preamble
         self._epilogue: str | None = epilogue
         self._raw_bytes: memoryview | None = None
+        self._fileobj: IO[bytes] | None = None
+        self._path: str | None = None
         logger.debug("QuiverFile opened", archive_name=name, mode=mode)
 
         if mode == "r":
-            archive_path = Path(name)
-            if not archive_path.exists():
-                raise FileNotFoundError(f"Archive not found: {name!r}")
+            name_str: str
+            if isinstance(name, str):
+                self._path = name
+                name_str = name
+                archive_path = Path(name_str)
+                if not archive_path.exists():
+                    raise FileNotFoundError(f"Archive not found: {name!r}")
+                raw_bytes = archive_path.read_bytes()
+            else:
+                self._fileobj = name
+                raw_bytes = name.read()
             t0 = time.perf_counter()
-            raw_entries, parsed_preamble, parsed_epilogue, raw_buffer = _parse_archive(name)
+            raw_entries, parsed_preamble, parsed_epilogue, raw_buffer = _parse_archive_bytes(
+                raw_bytes
+            )
             self._preamble = parsed_preamble if parsed_preamble.strip() else None
             self._epilogue = parsed_epilogue if parsed_epilogue.strip() else None
             self._raw_bytes = raw_buffer
@@ -549,13 +558,19 @@ class QuiverFile:
                 entry_count=len(raw_entries),
             )
 
+        elif mode == "w":
+            if isinstance(name, str):
+                self._path = name
+            else:
+                self._fileobj = name
+
     # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------
 
     @staticmethod
     def open(
-        name: str,
+        name: str | IO[bytes],
         mode: str = "r",
         preamble: str | None = None,
         epilogue: str | None = None,
@@ -563,7 +578,7 @@ class QuiverFile:
         """Open a quiver archive and return a [QuiverFile][] instance.
 
         Args:
-            name: Path to the archive file.
+            name: Path to the archive file, or a file-like object.
             mode: `'r'` (read) or `'w'` (write).
             preamble: Optional text to prepend before the XML when writing.
                 Ignored in read mode (preamble is parsed from the file).
@@ -725,7 +740,7 @@ class QuiverFile:
         """
         return list(self._members)
 
-    def read(self, member: str | QuiverInfo) -> str:
+    def readstr(self, member: str | QuiverInfo) -> str:
         """Return the content of an archive member as a string.
 
         Analogous to `zipfile.ZipFile.read`, but returns `str` instead of
@@ -735,6 +750,9 @@ class QuiverFile:
             member: The member to read — either a stored path (`str`) or
                 a [QuiverInfo][] object obtained from [infolist][] or
                 iteration.
+
+        Returns:
+            The content as a string.
 
         Raises:
             KeyError: If no entry with the given name exists in the archive.
@@ -757,6 +775,38 @@ class QuiverFile:
         text = str(raw_slice, "utf-8")
         return _unescape_cdata(text)
 
+    def read(self, member: str | QuiverInfo) -> bytes:
+        """Return the content of an archive member as bytes.
+
+        Args:
+            member: The member to read — either a stored path (`str`) or
+                a [QuiverInfo][] object obtained from [infolist][] or
+                iteration.
+
+        Returns:
+            The content as bytes.
+
+        Raises:
+            KeyError: If no entry with the given name exists in the archive.
+        """
+        target = self._resolve_member(member)
+        cached = self._content_cache.get(target.name)
+        if cached is not None:
+            return cached.encode("utf-8")
+
+        if self._mode == "w":
+            try:
+                content = self._get_entry_content(target.name)
+                return content.encode("utf-8")
+            except ValueError as exc:  # pragma: no cover - defensive
+                raise KeyError(target.name) from exc
+
+        if target._offset is None or self._raw_bytes is None:
+            raise KeyError(target.name)
+
+        raw_slice = self._raw_bytes[target._offset : target._offset + target.length]
+        return bytes(raw_slice)
+
     def __iter__(self) -> Iterator[QuiverInfo]:
         """Iterate over archive members, yielding [QuiverInfo][] objects.
 
@@ -764,7 +814,7 @@ class QuiverFile:
             ```python
             with quiver.open("archive.xml", mode="r") as qf:
                 for info in qf:
-                    content = qf.read(info)
+                    content = qf.readstr(info)
             ```
         """
         return iter(self._members)
@@ -913,27 +963,44 @@ class QuiverFile:
         sorted_infos = sorted(self._members, key=lambda info: info.name)
         paths = [info.name for info in sorted_infos]
         tree_text = build_directory_tree(paths)
-        output_path = Path(self._name)
 
-        with output_path.open("w", encoding="utf-8") as fp:
-            if self._preamble:
-                fp.write(self._preamble)
-                fp.write(_PREAMBLE_SENTINEL)
+        if self._fileobj is not None:
+            self._write_archive_to_fileobj(self._fileobj, sorted_infos, tree_text)
+        elif self._path is not None:
+            output_path = Path(self._path)
+            with output_path.open("w", encoding="utf-8") as fp:
+                self._write_archive_to_fp(fp, sorted_infos, tree_text)
 
-            fp.write(f'<archive version="{ARCHIVE_VERSION}">\n')
-            fp.write(f"  <directory_tree><![CDATA[\n{tree_text}\n]]></directory_tree>\n")
+    def _write_archive_to_fileobj(
+        self, fileobj: IO[bytes], sorted_infos: list[QuiverInfo], tree_text: str
+    ) -> None:
+        """Serialize the archive to a file-like object."""
+        buffer = io.StringIO()
+        self._write_archive_to_fp(buffer, sorted_infos, tree_text)
+        fileobj.write(buffer.getvalue().encode("utf-8"))
 
-            for info in sorted_infos:
-                content = self._get_entry_content(info.name)
-                escaped = _escape_cdata(content)
-                fp.write(
-                    f'  <file path="{info.name}">\n'
-                    f"    <content><![CDATA[{escaped}]]></content>\n"
-                    "  </file>\n"
-                )
+    def _write_archive_to_fp(
+        self, fp: IO[str], sorted_infos: list[QuiverInfo], tree_text: str
+    ) -> None:
+        """Serialize the archive to a text-mode file pointer."""
+        if self._preamble:
+            fp.write(self._preamble)
+            fp.write(_PREAMBLE_SENTINEL)
 
-            fp.write("</archive>\n")
+        fp.write(f'<archive version="{ARCHIVE_VERSION}">\n')
+        fp.write(f"  <directory_tree><![CDATA[\n{tree_text}\n]]></directory_tree>\n")
 
-            if self._epilogue:
-                fp.write(_EPILOGUE_SENTINEL)
-                fp.write(self._epilogue)
+        for info in sorted_infos:
+            content = self._get_entry_content(info.name)
+            escaped = _escape_cdata(content)
+            fp.write(
+                f'  <file path="{info.name}">\n'
+                f"    <content><![CDATA[{escaped}]]></content>\n"
+                "  </file>\n"
+            )
+
+        fp.write("</archive>\n")
+
+        if self._epilogue:
+            fp.write(_EPILOGUE_SENTINEL)
+            fp.write(self._epilogue)
