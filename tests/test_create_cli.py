@@ -1,4 +1,4 @@
-"""Integration tests for the tar-style quiver CLI command."""
+"""Integration tests for the tar-style mdbox CLI command."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import lxml.etree as etree
 import pytest
 from click.testing import CliRunner
 
-from quiver.cli import main
+from mdbox.cli import main
 
 
 @pytest.fixture

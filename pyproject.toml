@@ -1,5 +1,5 @@
 [project]
-name = "quiver"
+name = "mdbox"
 version = "0.1.0"
 description = "Pack and unpack text files into machine-readable XML"
 readme = "README.md"
@@ -33,13 +33,13 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/chgroeling/quiver"
-Repository = "https://github.com/chgroeling/quiver"
-Issues = "https://github.com/chgroeling/quiver/issues"
-Documentation = "https://github.com/chgroeling/quiver/tree/main/docs"
+Homepage = "https://github.com/chgroeling/mdbox"
+Repository = "https://github.com/chgroeling/mdbox"
+Issues = "https://github.com/chgroeling/mdbox/issues"
+Documentation = "https://github.com/chgroeling/mdbox/tree/main/docs"
 
 [project.scripts]
-quiver = "quiver.cli:main"
+mdbox = "mdbox.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -82,7 +82,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["quiver"]
+known-first-party = ["mdbox"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -120,4 +120,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/quiver"]
+packages = ["src/mdbox"]

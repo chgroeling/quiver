@@ -1,4 +1,4 @@
-"""Integration tests for the quiver CLI add (-a) command."""
+"""Integration tests for the mdbox CLI add (-a) command."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from pathlib import Path
 import lxml.etree as etree
 from click.testing import CliRunner
 
-from quiver.archive import QuiverFile
-from quiver.cli import main
+from mdbox.archive import MdboxFile
+from mdbox.cli import main
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -380,7 +380,7 @@ def test_add_missing_archive_creates_new(tmp_path: Path) -> None:
     result = runner.invoke(main, ["-af", str(archive), str(new_file)])
     assert result.exit_code == 0
     assert archive.exists()
-    with QuiverFile.open(str(archive), mode="r") as qf:
+    with MdboxFile.open(str(archive), mode="r") as qf:
         assert any(n.endswith("b.txt") for n in qf.namelist())
 
 

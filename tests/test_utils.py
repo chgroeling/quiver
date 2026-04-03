@@ -1,8 +1,8 @@
-"""Tests for src/quiver/utils/__init__.py — build_directory_tree."""
+"""Tests for src/mdbox/utils/__init__.py — build_directory_tree."""
 
 from __future__ import annotations
 
-from quiver.utils import build_directory_tree
+from mdbox.utils import build_directory_tree
 
 # ---------------------------------------------------------------------------
 # build_directory_tree — unit tests

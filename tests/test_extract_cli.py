@@ -1,4 +1,4 @@
-"""Integration tests for the quiver CLI extract (-x) command."""
+"""Integration tests for the mdbox CLI extract (-x) command."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from click.testing import CliRunner
 
-from quiver.cli import main
+from mdbox.cli import main
 
 if TYPE_CHECKING:
     from pathlib import Path

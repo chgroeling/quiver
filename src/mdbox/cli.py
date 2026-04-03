@@ -1,4 +1,4 @@
-"""CLI entry point for quiver."""
+"""CLI entry point for mdbox."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from pathlib import Path
 import click
 import structlog
 
-from quiver.archive import BinaryFileError, PathTraversalError, QuiverFile, _normalize_stored_path
-from quiver.logging import configure_debug_logging, get_console
+from mdbox.archive import BinaryFileError, MdboxFile, PathTraversalError, _normalize_stored_path
+from mdbox.logging import configure_debug_logging, get_console
 
 logger = structlog.get_logger(__name__)
 
@@ -162,7 +162,7 @@ def _run_create(
         console.print(f"Packing [bold]{sources}[/bold] → [bold]{archive_file}[/bold]...")
 
     try:
-        with QuiverFile.open(
+        with MdboxFile.open(
             archive_file, mode="w", preamble=resolved_preamble, epilogue=resolved_epilogue
         ) as qf:
             for input_path in inputs:
@@ -221,17 +221,17 @@ def _run_add(
         t0 = time.perf_counter()
         if archive_path.exists():
             # Repack: read existing archive, merge new inputs, write to temp, atomic rename.
-            with QuiverFile.open(archive_file, mode="r") as src:
+            with MdboxFile.open(archive_file, mode="r") as src:
                 existing_entries = [(info.name, src.readstr(info)) for info in src]
                 preamble = src.preamble
                 epilogue = src.epilogue
 
             tmp_fd, tmp_name = tempfile.mkstemp(
-                dir=archive_path.parent, prefix=".quiver-", suffix=".tmp"
+                dir=archive_path.parent, prefix=".mdbox-", suffix=".tmp"
             )
             try:
                 os.close(tmp_fd)
-                with QuiverFile.open(
+                with MdboxFile.open(
                     tmp_name, mode="w", preamble=preamble, epilogue=epilogue
                 ) as dst:
                     for name, content in existing_entries:
@@ -246,7 +246,7 @@ def _run_add(
             entry_count = len(existing_entries)
         else:
             # Archive does not exist — create it from scratch.
-            with QuiverFile.open(archive_file, mode="w") as dst:
+            with MdboxFile.open(archive_file, mode="w") as dst:
                 for input_path in inputs:
                     dst.write(input_path)
             entry_count = 0
@@ -300,7 +300,7 @@ def _run_delete(
         )
 
     try:
-        with QuiverFile.open(archive_file, mode="r") as src:
+        with MdboxFile.open(archive_file, mode="r") as src:
             filtered: list[tuple[str, str]] = []
             original_count = 0
             for info in src:
@@ -313,11 +313,11 @@ def _run_delete(
         t0 = time.perf_counter()
         # Write to a sibling temp file then atomically replace the original.
         tmp_fd, tmp_name = tempfile.mkstemp(
-            dir=archive_path.parent, prefix=".quiver-", suffix=".tmp"
+            dir=archive_path.parent, prefix=".mdbox-", suffix=".tmp"
         )
         try:
             os.close(tmp_fd)
-            with QuiverFile.open(tmp_name, mode="w", preamble=preamble, epilogue=epilogue) as dst:
+            with MdboxFile.open(tmp_name, mode="w", preamble=preamble, epilogue=epilogue) as dst:
                 for name, content in filtered:
                     dst.writestr(name, content)
             Path(tmp_name).replace(archive_file)
@@ -354,7 +354,7 @@ def _run_extract(archive_file: str | None, verbose: bool, inputs: tuple[str, ...
         console.print(f"Extracting [bold]{archive_file}[/bold] → [bold]{destination}[/bold]...")
 
     try:
-        with QuiverFile.open(archive_file, mode="r") as qf:
+        with MdboxFile.open(archive_file, mode="r") as qf:
             qf.extractall(path=destination)
     except FileNotFoundError as exc:
         click.echo(f"Error: {exc}", err=True)

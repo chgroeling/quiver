@@ -1,7 +1,7 @@
-"""Core archive API: QuiverFile and QuiverInfo.
+"""Core archive API: MdboxFile and MdboxInfo.
 
 Provides a zipfile-like interface for packing and unpacking text files
-into the quiver XML archive format.
+into the mdbox XML archive format.
 
 Internal layer layout (top → bottom, no upward imports):
 
@@ -10,7 +10,7 @@ Internal layer layout (top → bottom, no upward imports):
     Layer 2 — I/O                 (file reading, directory walking)
     Layer 3 — Async Extract Pipeline (_ExtractPipeline)
     Layer 4 — XML Serialization   (string-building + regex, no asyncio)
-    Layer 5 — Public API          (QuiverInfo, QuiverFile)
+    Layer 5 — Public API          (MdboxInfo, MdboxFile)
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from typing import IO, TYPE_CHECKING
 import structlog
 from aiofile import async_open
 
-from quiver.utils import build_directory_tree
+from mdbox.utils import build_directory_tree
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -305,7 +305,7 @@ def _unescape_cdata(raw_cdata: str) -> str:
 
 
 def _parse_archive_bytes(raw_bytes: bytes) -> _ParseResult:
-    """Parse a quiver XML archive from raw bytes and return its file entries.
+    """Parse a mdbox XML archive from raw bytes and return its file entries.
 
     Splits out any preamble and epilogue via [_split_archive_bytes][], then
     extracts ``<file>`` entries from the XML block using regex.
@@ -352,19 +352,19 @@ class _ExtractPipeline:
     Args:
         entries: List of archive members to extract.
         destination: Resolved absolute path of the extraction root directory.
-        quiver_file: Archive instance used to read member contents.
+        mdbox_file: Archive instance used to read member contents.
     """
 
     def __init__(
         self,
-        entries: list[QuiverInfo],
+        entries: list[MdboxInfo],
         destination: Path,
         *,
-        quiver_file: QuiverFile,
+        mdbox_file: MdboxFile,
     ) -> None:
         self._entries = entries
         self._destination = destination
-        self._quiver_file = quiver_file
+        self._mdbox_file = mdbox_file
 
     async def run_async(self) -> None:
         """Execute the pipeline inside an existing event loop."""
@@ -402,10 +402,10 @@ class _ExtractPipeline:
             await asyncio.gather(*worker_tasks, return_exceptions=True)
             raise
 
-    async def _writer_worker(self, entries: list[QuiverInfo]) -> None:
+    async def _writer_worker(self, entries: list[MdboxInfo]) -> None:
         """Write each entry in *entries* to disk."""
         for info in entries:
-            content = self._quiver_file.readstr(info)
+            content = self._mdbox_file.readstr(info)
             target = _validate_extraction_path(info.name, self._destination)
             await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
             async with async_open(target, "w", encoding="utf-8") as afp:
@@ -444,8 +444,8 @@ def _escape_cdata(content: str) -> str:
 # ===========================================================================
 
 
-class QuiverInfo:
-    """Metadata for a single file entry within a quiver archive.
+class MdboxInfo:
+    """Metadata for a single file entry within a mdbox archive.
 
     Attributes:
         name: Normalized POSIX path of the file.
@@ -464,7 +464,7 @@ class QuiverInfo:
         self._offset = _offset
 
     def isfile(self) -> bool:
-        """Return True — all current quiver entries are files."""
+        """Return True — all current mdbox entries are files."""
         return True
 
     def isdir(self) -> bool:
@@ -472,14 +472,14 @@ class QuiverInfo:
         return False
 
     def __repr__(self) -> str:
-        return f"QuiverInfo(name={self.name!r}, length={self.length})"
+        return f"MdboxInfo(name={self.name!r}, length={self.length})"
 
 
-class QuiverFile:
-    """Central archive class for reading and writing quiver XML archives.
+class MdboxFile:
+    """Central archive class for reading and writing mdbox XML archives.
 
-    Analogous to `zipfile.ZipFile`. Use the [open][QuiverFile.open] factory
-    method or the module-level `quiver.open` function to create instances.
+    Analogous to `zipfile.ZipFile`. Use the [open][MdboxFile.open] factory
+    method or the module-level `mdbox.open` function to create instances.
 
     Supported modes:
         `'r'`: Open for reading; parses the archive immediately on open.
@@ -487,13 +487,13 @@ class QuiverFile:
 
     Example:
         ```python
-        with QuiverFile.open("archive.xml", mode="w") as qf:
+        with MdboxFile.open("archive.xml", mode="w") as qf:
             qf.write("README.md")
             qf.write("src/main.py", arcname="main.py")
         ```
 
         ```python
-        with QuiverFile.open("archive.xml", mode="r") as qf:
+        with MdboxFile.open("archive.xml", mode="r") as qf:
             for info in qf:
                 content = qf.read(info)
         ```
@@ -512,8 +512,8 @@ class QuiverFile:
             )
         self._name = name
         self._mode = mode
-        self._members: list[QuiverInfo] = []
-        self._member_map: dict[str, QuiverInfo] = {}
+        self._members: list[MdboxInfo] = []
+        self._member_map: dict[str, MdboxInfo] = {}
         self._content_cache: dict[str, str] = {}
         self._source_map: dict[str, Path] = {}
         self._closed = False
@@ -522,7 +522,7 @@ class QuiverFile:
         self._raw_bytes: memoryview | None = None
         self._fileobj: IO[bytes] | None = None
         self._path: str | None = None
-        logger.debug("QuiverFile opened", archive_name=name, mode=mode)
+        logger.debug("MdboxFile opened", archive_name=name, mode=mode)
 
         if mode == "r":
             name_str: str
@@ -544,7 +544,7 @@ class QuiverFile:
             self._epilogue = parsed_epilogue if parsed_epilogue.strip() else None
             self._raw_bytes = raw_buffer
             for stored_path, payload_length, byte_offset in raw_entries:
-                info = QuiverInfo(
+                info = MdboxInfo(
                     name=stored_path,
                     length=payload_length,
                     _offset=byte_offset,
@@ -574,8 +574,8 @@ class QuiverFile:
         mode: str = "r",
         preamble: str | None = None,
         epilogue: str | None = None,
-    ) -> QuiverFile:
-        """Open a quiver archive and return a [QuiverFile][] instance.
+    ) -> MdboxFile:
+        """Open a mdbox archive and return a [MdboxFile][] instance.
 
         Args:
             name: Path to the archive file, or a file-like object.
@@ -586,18 +586,18 @@ class QuiverFile:
                 Ignored in read mode (epilogue is parsed from the file).
 
         Returns:
-            A new [QuiverFile][] instance.
+            A new [MdboxFile][] instance.
 
         Raises:
             ValueError: If *mode* is not `'r'` or `'w'`.
         """
-        return QuiverFile(name, mode, preamble=preamble, epilogue=epilogue)
+        return MdboxFile(name, mode, preamble=preamble, epilogue=epilogue)
 
     # ------------------------------------------------------------------
     # Context manager
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> QuiverFile:
+    def __enter__(self) -> MdboxFile:
         return self
 
     def __exit__(
@@ -660,7 +660,7 @@ class QuiverFile:
                 relative = child.relative_to(resolved_root)
                 stored_path = _directory_stored_path(relative=relative, arcname=effective_arcname)
                 length = child.stat().st_size
-                info = QuiverInfo(name=stored_path, length=length)
+                info = MdboxInfo(name=stored_path, length=length)
                 self._register_source_entry(info, child)
             return
 
@@ -668,7 +668,7 @@ class QuiverFile:
             _normalize_stored_path(arcname) if arcname is not None else _normalize_path(file_path)
         )
         length = resolved_path.stat().st_size
-        info = QuiverInfo(name=stored_path, length=length)
+        info = MdboxInfo(name=stored_path, length=length)
         self._register_source_entry(info, resolved_path)
 
     def writestr(self, arcname: str, content: str) -> None:
@@ -708,7 +708,7 @@ class QuiverFile:
         _validate_xml_compatible(content, arcname)
 
         stored_path = _normalize_stored_path(arcname)
-        info = QuiverInfo(name=stored_path, length=0)
+        info = MdboxInfo(name=stored_path, length=0)
         self._cache_entry(info, content)
         logger.debug("Added data", entry_path=stored_path, length_bytes=info.length)
 
@@ -733,22 +733,22 @@ class QuiverFile:
         """
         return [info.name for info in self._members]
 
-    def infolist(self) -> list[QuiverInfo]:
-        """Return a list of [QuiverInfo][] objects for all archive members.
+    def infolist(self) -> list[MdboxInfo]:
+        """Return a list of [MdboxInfo][] objects for all archive members.
 
         Analogous to `zipfile.ZipFile.infolist`.
         """
         return list(self._members)
 
-    def readstr(self, member: str | QuiverInfo) -> str:
+    def readstr(self, member: str | MdboxInfo) -> str:
         """Return the content of an archive member as a string.
 
         Analogous to `zipfile.ZipFile.read`, but returns `str` instead of
-        `bytes` because quiver archives contain only UTF-8 text.
+        `bytes` because mdbox archives contain only UTF-8 text.
 
         Args:
             member: The member to read — either a stored path (`str`) or
-                a [QuiverInfo][] object obtained from [infolist][] or
+                a [MdboxInfo][] object obtained from [infolist][] or
                 iteration.
 
         Returns:
@@ -775,12 +775,12 @@ class QuiverFile:
         text = str(raw_slice, "utf-8")
         return _unescape_cdata(text)
 
-    def read(self, member: str | QuiverInfo) -> bytes:
+    def read(self, member: str | MdboxInfo) -> bytes:
         """Return the content of an archive member as bytes.
 
         Args:
             member: The member to read — either a stored path (`str`) or
-                a [QuiverInfo][] object obtained from [infolist][] or
+                a [MdboxInfo][] object obtained from [infolist][] or
                 iteration.
 
         Returns:
@@ -807,20 +807,20 @@ class QuiverFile:
         raw_slice = self._raw_bytes[target._offset : target._offset + target.length]
         return bytes(raw_slice)
 
-    def __iter__(self) -> Iterator[QuiverInfo]:
-        """Iterate over archive members, yielding [QuiverInfo][] objects.
+    def __iter__(self) -> Iterator[MdboxInfo]:
+        """Iterate over archive members, yielding [MdboxInfo][] objects.
 
         Example:
             ```python
-            with quiver.open("archive.xml", mode="r") as qf:
+            with mdbox.open("archive.xml", mode="r") as qf:
                 for info in qf:
                     content = qf.readstr(info)
             ```
         """
         return iter(self._members)
 
-    def _resolve_member(self, member: str | QuiverInfo) -> QuiverInfo:
-        if isinstance(member, QuiverInfo):
+    def _resolve_member(self, member: str | MdboxInfo) -> MdboxInfo:
+        if isinstance(member, MdboxInfo):
             return member
         try:
             return self._member_map[member]
@@ -830,7 +830,7 @@ class QuiverFile:
     def extractall(
         self,
         path: str = ".",
-        members: list[QuiverInfo] | None = None,
+        members: list[MdboxInfo] | None = None,
     ) -> None:
         """Extract all (or selected) archive members to *path*.
 
@@ -840,7 +840,7 @@ class QuiverFile:
 
         Args:
             path: Destination directory. Defaults to the current directory.
-            members: If given, only these [QuiverInfo][] members are extracted.
+            members: If given, only these [MdboxInfo][] members are extracted.
                 Must be a subset of [infolist][].
 
         Raises:
@@ -859,7 +859,7 @@ class QuiverFile:
         allowed_names: set[str] | None = (
             {info.name for info in members} if members is not None else None
         )
-        entries: list[QuiverInfo] = []
+        entries: list[MdboxInfo] = []
         for info in self._members:
             if allowed_names is not None and info.name not in allowed_names:
                 continue
@@ -868,7 +868,7 @@ class QuiverFile:
         pipeline = _ExtractPipeline(
             entries=entries,
             destination=destination,
-            quiver_file=self,
+            mdbox_file=self,
         )
 
         asyncio.run(pipeline.run_async())
@@ -913,7 +913,7 @@ class QuiverFile:
                 entry_count=len(self._members),
             )
 
-    def _cache_entry(self, info: QuiverInfo, content: str) -> None:
+    def _cache_entry(self, info: MdboxInfo, content: str) -> None:
         """Store *content* for *info*, upserting in write mode."""
 
         stored_info = self._upsert_member(info)
@@ -921,7 +921,7 @@ class QuiverFile:
         self._source_map.pop(stored_info.name, None)
         stored_info.length = len(_escape_cdata(content).encode("utf-8"))
 
-    def _register_source_entry(self, info: QuiverInfo, source: Path) -> None:
+    def _register_source_entry(self, info: MdboxInfo, source: Path) -> None:
         """Register a disk-backed entry that can be read lazily later."""
 
         stored_info = self._upsert_member(info)
@@ -929,7 +929,7 @@ class QuiverFile:
         self._content_cache.pop(stored_info.name, None)
         logger.debug("Added file", entry_path=stored_info.name, length_bytes=stored_info.length)
 
-    def _upsert_member(self, info: QuiverInfo) -> QuiverInfo:
+    def _upsert_member(self, info: MdboxInfo) -> MdboxInfo:
         info._offset = None
         existing = self._member_map.get(info.name)
         if existing is None:
@@ -972,7 +972,7 @@ class QuiverFile:
                 self._write_archive_to_fp(fp, sorted_infos, tree_text)
 
     def _write_archive_to_fileobj(
-        self, fileobj: IO[bytes], sorted_infos: list[QuiverInfo], tree_text: str
+        self, fileobj: IO[bytes], sorted_infos: list[MdboxInfo], tree_text: str
     ) -> None:
         """Serialize the archive to a file-like object."""
         buffer = io.StringIO()
@@ -980,7 +980,7 @@ class QuiverFile:
         fileobj.write(buffer.getvalue().encode("utf-8"))
 
     def _write_archive_to_fp(
-        self, fp: IO[str], sorted_infos: list[QuiverInfo], tree_text: str
+        self, fp: IO[str], sorted_infos: list[MdboxInfo], tree_text: str
     ) -> None:
         """Serialize the archive to a text-mode file pointer."""
         if self._preamble:

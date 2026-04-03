@@ -1,4 +1,4 @@
-# quiver
+# mdbox
 
 > Pack and unpack text files into structured archives with embedded XML.
 
@@ -8,7 +8,7 @@
 
 ## Overview
 
-Quiver bundles text file directories into a plain text archive with an embedded XML block. It provides a `zipfile`-like Python API and a `tar`-style CLI for creating, extracting, modifying, and deleting entries. Each archive embeds a visual directory tree and stores file contents in CDATA sections — Git-friendly and parseable by any XML tool.
+MdBox bundles text file directories into a plain text archive with an embedded XML block. It provides a `zipfile`-like Python API and a `tar`-style CLI for creating, extracting, modifying, and deleting entries. Each archive embeds a visual directory tree and stores file contents in CDATA sections — Git-friendly and parseable by any XML tool.
 
 **Designed for LLM pipelines.** The preamble and epilogue — arbitrary text before and after the XML — are ideal for system prompts and instructions. A single archive becomes a self-contained prompt + context bundle ready for any LLM.
 
@@ -27,7 +27,7 @@ Quiver bundles text file directories into a plain text archive with an embedded 
 
 ## Archive Format
 
-A quiver archive is a plain text file with three sections: an arbitrary preamble, a central `<archive>` XML element, and an arbitrary epilogue. The preamble and epilogue can contain any text — Markdown, prose, system prompts, metadata — while the XML block in between holds the structured file data.
+A mdbox archive is a plain text file with three sections: an arbitrary preamble, a central `<archive>` XML element, and an arbitrary epilogue. The preamble and epilogue can contain any text — Markdown, prose, system prompts, metadata — while the XML block in between holds the structured file data.
 
 ```markdown
 # Project Snapshot
@@ -68,13 +68,13 @@ The `<directory_tree>` element provides an at-a-glance structure. File contents 
 ## Installation
 
 ```bash
-pip install quiver
+pip install mdbox
 ```
 
 Or with [uv](https://github.com/astral-sh/uv):
 
 ```bash
-uv add quiver
+uv add mdbox
 ```
 
 Requires **Python 3.12+**.
@@ -84,15 +84,15 @@ Requires **Python 3.12+**.
 **CLI** — create an archive from a directory:
 
 ```bash
-quiver -cvf backup.xml src/ README.md
+mdbox -cvf backup.xml src/ README.md
 ```
 
 **Python** — same operation programmatically:
 
 ```python
-import quiver
+import mdbox
 
-with quiver.open("backup.xml", mode="w") as qf:
+with mdbox.open("backup.xml", mode="w") as qf:
     qf.write("src")
     qf.write("README.md")
 ```
@@ -100,11 +100,11 @@ with quiver.open("backup.xml", mode="w") as qf:
 **Extract** back to disk:
 
 ```bash
-quiver -xf backup.xml output/
+mdbox -xf backup.xml output/
 ```
 
 ```python
-with quiver.open("backup.xml", mode="r") as qf:
+with mdbox.open("backup.xml", mode="r") as qf:
     qf.extractall("output")
 ```
 
@@ -115,13 +115,13 @@ with quiver.open("backup.xml", mode="r") as qf:
 Pack files and directories into a new archive.
 
 ```bash
-quiver -cvf archive.xml src/ docs/ README.md
+mdbox -cvf archive.xml src/ docs/ README.md
 ```
 
 With preamble and epilogue (text or file path):
 
 ```bash
-quiver -cvf archive.xml --preamble "Build 2024-01-15" --epilogue license.txt src/
+mdbox -cvf archive.xml --preamble "Build 2024-01-15" --epilogue license.txt src/
 ```
 
 ### Extract (`-x`)
@@ -129,7 +129,7 @@ quiver -cvf archive.xml --preamble "Build 2024-01-15" --epilogue license.txt src
 Extract all entries to a destination directory (default: `.`).
 
 ```bash
-quiver -xf archive.xml output/
+mdbox -xf archive.xml output/
 ```
 
 ### Add / Upsert (`-a`)
@@ -137,7 +137,7 @@ quiver -xf archive.xml output/
 Add new files or replace existing ones. Creates the archive if it doesn't exist.
 
 ```bash
-quiver -avf archive.xml new_module.py
+mdbox -avf archive.xml new_module.py
 ```
 
 The add operation uses a safe repack strategy: reads the existing archive, merges new entries, writes to a temp file, then atomically replaces the original.
@@ -147,18 +147,18 @@ The add operation uses a safe repack strategy: reads the existing archive, merge
 Remove files or directory prefixes from an archive.
 
 ```bash
-quiver --delete -f archive.xml old_module.py src/deprecated/
+mdbox --delete -f archive.xml old_module.py src/deprecated/
 ```
 
 Like add, delete uses atomic repack — no partial writes can corrupt the archive.
 
 ### Flag Bundling
 
-Quiver supports `tar`-style bundled flags. The `-f` flag must come last in a bundle:
+MdBox supports `tar`-style bundled flags. The `-f` flag must come last in a bundle:
 
 ```bash
-quiver -cvf archive.xml src/    # create, verbose, file
-quiver -xf archive.xml ./out    # extract, file
+mdbox -cvf archive.xml src/    # create, verbose, file
+mdbox -xf archive.xml ./out    # extract, file
 ```
 
 ### Options
@@ -180,14 +180,14 @@ quiver -xf archive.xml ./out    # extract, file
 ### Opening Archives
 
 ```python
-import quiver
+import mdbox
 
 # Write mode — creates or overwrites
-with quiver.open("archive.xml", mode="w") as qf:
+with mdbox.open("archive.xml", mode="w") as qf:
     qf.write("src")
 
 # Read mode — parses existing archive
-with quiver.open("archive.xml", mode="r") as qf:
+with mdbox.open("archive.xml", mode="r") as qf:
     for info in qf:
         print(info.name, info.length)
 ```
@@ -195,7 +195,7 @@ with quiver.open("archive.xml", mode="r") as qf:
 ### Writing
 
 ```python
-with quiver.open("archive.xml", mode="w") as qf:
+with mdbox.open("archive.xml", mode="w") as qf:
     # Add a file (stored path: "main.py")
     qf.write("main.py")
 
@@ -214,7 +214,7 @@ with quiver.open("archive.xml", mode="w") as qf:
 ```python
 import io
 
-with quiver.open("archive.xml", mode="r") as qf:
+with mdbox.open("archive.xml", mode="r") as qf:
     # List members
     names = qf.namelist()
 
@@ -236,18 +236,18 @@ with quiver.open("archive.xml", mode="r") as qf:
 
 # File-like object support (read or write mode)
 with io.BytesIO() as buffer:
-    with quiver.open(buffer, mode="w") as qf:
+    with mdbox.open(buffer, mode="w") as qf:
         qf.writestr("test.txt", "hello")
 
     buffer.seek(0)  # Rewind to read
-    with quiver.open(buffer, mode="r") as qf:
+    with mdbox.open(buffer, mode="r") as qf:
         print(qf.readstr("test.txt"))  # "hello"
 ```
 
 ### Extraction
 
 ```python
-with quiver.open("archive.xml", mode="r") as qf:
+with mdbox.open("archive.xml", mode="r") as qf:
     # Extract all to current directory
     qf.extractall()
 
@@ -262,16 +262,16 @@ with quiver.open("archive.xml", mode="r") as qf:
 ### Error Handling
 
 ```python
-from quiver import BinaryFileError, PathTraversalError
+from mdbox import BinaryFileError, PathTraversalError
 
 try:
-    with quiver.open("archive.xml", mode="w") as qf:
+    with mdbox.open("archive.xml", mode="w") as qf:
         qf.write("binary.dat")  # raises BinaryFileError
 except BinaryFileError as e:
     print(f"Invalid text file: {e}")
 
 try:
-    with quiver.open("archive.xml", mode="r") as qf:
+    with mdbox.open("archive.xml", mode="r") as qf:
         qf.extractall()  # raises PathTraversalError on malicious paths
 except PathTraversalError as e:
     print(f"Unsafe path: {e}")
@@ -308,8 +308,8 @@ All content passes two checks before entering the archive:
 
 ```bash
 # Clone and sync dependencies
-git clone https://github.com/chgroeling/quiver.git
-cd quiver
+git clone https://github.com/chgroeling/mdbox.git
+cd mdbox
 uv sync --all-extras
 ```
 
@@ -333,7 +333,7 @@ uv run ruff format src/ tests/ && uv run ruff check src/ tests/ && uv run mypy s
 ### Test Coverage
 
 ```bash
-uv run pytest --cov=quiver --cov-report=html
+uv run pytest --cov=mdbox --cov-report=html
 ```
 
 ## License

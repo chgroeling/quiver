@@ -1,4 +1,4 @@
-"""Integration tests for the quiver CLI --delete command."""
+"""Integration tests for the mdbox CLI --delete command."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 import lxml.etree as etree
 from click.testing import CliRunner
 
-from quiver.cli import main
+from mdbox.cli import main
 
 # ---------------------------------------------------------------------------
 # Helpers

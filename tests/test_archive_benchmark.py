@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import itertools
 import random
 import string
+from typing import TYPE_CHECKING
 
 import pytest
 
-from quiver.archive import QuiverFile
+from mdbox.archive import MdboxFile
 
 if TYPE_CHECKING:
     from pathlib import Path
+
     from pytest_benchmark.fixture import BenchmarkFixture
 
 
@@ -37,7 +37,7 @@ def test_extractall_benchmark(tmp_path: Path, benchmark: BenchmarkFixture) -> No
     project = _build_random_project(tmp_path, files=file_count, seed=2024)
     archive_path = tmp_path / "archive.xml"
 
-    with QuiverFile.open(str(archive_path), mode="w") as qf:
+    with MdboxFile.open(str(archive_path), mode="w") as qf:
         qf.write(str(project))
 
     destinations: list[Path] = []
@@ -46,7 +46,7 @@ def test_extractall_benchmark(tmp_path: Path, benchmark: BenchmarkFixture) -> No
     def run_extract() -> None:
         dest = tmp_path / f"extract_{next(counter)}"
         destinations.append(dest)
-        with QuiverFile.open(str(archive_path), mode="r") as qf:
+        with MdboxFile.open(str(archive_path), mode="r") as qf:
             qf.extractall(path=str(dest))
 
     benchmark(run_extract)

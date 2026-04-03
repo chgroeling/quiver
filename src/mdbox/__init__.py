@@ -1,17 +1,17 @@
-"""Quiver: Pack and unpack text files into machine-readable XML."""
+"""Mdbox: Pack and unpack text files into machine-readable XML."""
 
 from __future__ import annotations
 
 from typing import IO
 
-from quiver.archive import BinaryFileError, PathTraversalError, QuiverFile, QuiverInfo
+from mdbox.archive import BinaryFileError, MdboxFile, MdboxInfo, PathTraversalError
 
 __version__ = "0.1.0"
 __all__ = [
     "__version__",
     "open",
-    "QuiverFile",
-    "QuiverInfo",
+    "MdboxFile",
+    "MdboxInfo",
     "BinaryFileError",
     "PathTraversalError",
 ]
@@ -22,8 +22,8 @@ def open(
     mode: str = "r",
     preamble: str | None = None,
     epilogue: str | None = None,
-) -> QuiverFile:
-    """Open a quiver archive and return a [QuiverFile][] instance.
+) -> MdboxFile:
+    """Open a mdbox archive and return a [MdboxFile][] instance.
 
     This is the top-level factory function, analogous to `zipfile.ZipFile`.
 
@@ -36,14 +36,14 @@ def open(
             Ignored in read mode (epilogue is parsed from the file).
 
     Returns:
-        A new [QuiverFile][] instance.
+        A new [MdboxFile][] instance.
 
     Example:
         ```python
-        import quiver
+        import mdbox
 
-        with quiver.open("archive.xml", mode="w") as qf:
+        with mdbox.open("archive.xml", mode="w") as qf:
             qf.write("README.md")
         ```
     """
-    return QuiverFile.open(name, mode, preamble=preamble, epilogue=epilogue)
+    return MdboxFile.open(name, mode, preamble=preamble, epilogue=epilogue)

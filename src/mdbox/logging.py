@@ -1,4 +1,4 @@
-"""Logging and UI configuration for quiver.
+"""Logging and UI configuration for mdbox.
 
 Keeps :mod:`structlog` (internal debug logging) and :mod:`rich` (user-facing
 verbose output) strictly separated, and ensures the CLI remains silent by
@@ -12,7 +12,6 @@ import logging
 import structlog
 from rich.console import Console
 
-# A single null-output console instance reused for the no-verbose case.
 _QUIET_CONSOLE = Console(quiet=True)
 
 
@@ -41,9 +40,6 @@ def configure_debug_logging(enabled: bool) -> None:
             logger_factory=structlog.PrintLoggerFactory(),
         )
     else:
-        # Suppress all logging output — the CLI is silent by default.
-        # Use CRITICAL (50) as the minimum level so nothing is emitted, and
-        # route to a NullHandler so no "No handlers could be found" warnings appear.
         logging.getLogger().addHandler(logging.NullHandler())
         structlog.configure(
             wrapper_class=structlog.make_filtering_bound_logger(logging.CRITICAL),

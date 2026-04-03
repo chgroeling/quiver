@@ -1,1 +1,1 @@
-"""Test suite for quiver."""
+"""Test suite for mdbox."""

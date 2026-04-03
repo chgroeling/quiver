@@ -2,7 +2,7 @@
 
 from click.testing import CliRunner
 
-from quiver.cli import main
+from mdbox.cli import main
 
 
 def test_cli_version() -> None:

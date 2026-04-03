@@ -1,4 +1,4 @@
-"""Utility modules for quiver."""
+"""Utility modules for mdbox."""
 
 from __future__ import annotations
 

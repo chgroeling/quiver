@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 import pytest
 from click.testing import CliRunner
 
-from quiver.archive import QuiverFile
-from quiver.cli import main
+from mdbox.archive import MdboxFile
+from mdbox.cli import main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -22,29 +22,29 @@ if TYPE_CHECKING:
 def test_preamble_absent_when_none_given(tmp_path: Path) -> None:
     """An archive written without a preamble has no preamble on read-back."""
     archive = tmp_path / "archive.xml"
-    with QuiverFile.open(str(archive), mode="w") as qf:
+    with MdboxFile.open(str(archive), mode="w") as qf:
         qf.writestr("a.txt", "hi")
-    with QuiverFile.open(str(archive), mode="r") as qf:
+    with MdboxFile.open(str(archive), mode="r") as qf:
         assert qf.preamble is None
 
 
 def test_epilogue_absent_when_none_given(tmp_path: Path) -> None:
     """An archive written without an epilogue has no epilogue on read-back."""
     archive = tmp_path / "archive.xml"
-    with QuiverFile.open(str(archive), mode="w") as qf:
+    with MdboxFile.open(str(archive), mode="w") as qf:
         qf.writestr("a.txt", "hi")
-    with QuiverFile.open(str(archive), mode="r") as qf:
+    with MdboxFile.open(str(archive), mode="r") as qf:
         assert qf.epilogue is None
 
 
 def test_preamble_and_epilogue_round_trip(tmp_path: Path) -> None:
     """Preamble and epilogue supplied at write time survive a full round-trip."""
     archive = tmp_path / "archive.xml"
-    with QuiverFile.open(
+    with MdboxFile.open(
         str(archive), mode="w", preamble="Before text", epilogue="After text"
     ) as qf:
         qf.writestr("a.txt", "hi")
-    with QuiverFile.open(str(archive), mode="r") as qf:
+    with MdboxFile.open(str(archive), mode="r") as qf:
         assert qf.preamble == "Before text"
         assert qf.epilogue == "After text"
 
@@ -52,13 +52,13 @@ def test_preamble_and_epilogue_round_trip(tmp_path: Path) -> None:
 def test_first_archive_block_wins_multiple_blocks(tmp_path: Path) -> None:
     """When raw file content contains two <archive> blocks the second is treated as epilogue."""
     archive = tmp_path / "archive.xml"
-    with QuiverFile.open(str(archive), mode="w") as qf:
+    with MdboxFile.open(str(archive), mode="w") as qf:
         qf.writestr("a.txt", "A")
     # Append a second archive block as epilogue by rewriting the file directly.
     raw = archive.read_text(encoding="utf-8")
     second_block = '<archive version="1.0"><file path="b.txt"><content><![CDATA[B]]></content></file></archive>\n'
     archive.write_text(raw + second_block, encoding="utf-8")
-    with QuiverFile.open(str(archive), mode="r") as qf:
+    with MdboxFile.open(str(archive), mode="r") as qf:
         assert qf.namelist() == ["a.txt"]
         assert qf.epilogue is not None
         assert "b.txt" in qf.epilogue
@@ -69,7 +69,7 @@ def test_missing_archive_tag_raises(tmp_path: Path) -> None:
     bad = tmp_path / "bad.xml"
     bad.write_text("just plain text with no archive element", encoding="utf-8")
     with pytest.raises(ValueError, match="No <archive>"):
-        QuiverFile.open(str(bad), mode="r")
+        MdboxFile.open(str(bad), mode="r")
 
 
 def test_missing_close_tag_raises(tmp_path: Path) -> None:
@@ -77,16 +77,16 @@ def test_missing_close_tag_raises(tmp_path: Path) -> None:
     bad = tmp_path / "bad.xml"
     bad.write_text('<archive version="1.0"><file path="x.txt"/>', encoding="utf-8")
     with pytest.raises(ValueError, match="No </archive>"):
-        QuiverFile.open(str(bad), mode="r")
+        MdboxFile.open(str(bad), mode="r")
 
 
 def test_preamble_sentinel_stripped_on_round_trip(tmp_path: Path) -> None:
     """The newline sentinel between preamble and <archive> is not part of the preamble value."""
     archive = tmp_path / "archive.xml"
     preamble_text = "My preamble"
-    with QuiverFile.open(str(archive), mode="w", preamble=preamble_text) as qf:
+    with MdboxFile.open(str(archive), mode="w", preamble=preamble_text) as qf:
         qf.writestr("a.txt", "content")
-    with QuiverFile.open(str(archive), mode="r") as qf:
+    with MdboxFile.open(str(archive), mode="r") as qf:
         assert qf.preamble == preamble_text
 
 
@@ -99,7 +99,7 @@ def test_no_sentinel_no_strip(tmp_path: Path) -> None:
         "</archive>",
         encoding="utf-8",
     )
-    with QuiverFile.open(str(archive), mode="r") as qf:
+    with MdboxFile.open(str(archive), mode="r") as qf:
         assert qf.preamble is None
         assert qf.epilogue is None
 
@@ -373,7 +373,7 @@ def test_roundtrip_via_python_api(tmp_path: Path) -> None:
     src_file = tmp_path / "hello.txt"
     src_file.write_text("world", encoding="utf-8")
 
-    with QuiverFile.open(str(archive_path), mode="w", preamble="TOP\n", epilogue="\nBOTTOM") as qf:
+    with MdboxFile.open(str(archive_path), mode="w", preamble="TOP\n", epilogue="\nBOTTOM") as qf:
         qf.write(str(src_file))
 
     raw = archive_path.read_text(encoding="utf-8")
@@ -381,7 +381,7 @@ def test_roundtrip_via_python_api(tmp_path: Path) -> None:
     assert "BOTTOM" in raw
 
     dest = tmp_path / "out"
-    with QuiverFile.open(str(archive_path), mode="r") as qf:
+    with MdboxFile.open(str(archive_path), mode="r") as qf:
         assert qf._preamble == "TOP\n"
         assert qf._epilogue == "\nBOTTOM"
         qf.extractall(path=str(dest))

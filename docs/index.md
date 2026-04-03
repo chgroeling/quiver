@@ -1,11 +1,11 @@
-# Quiver Documentation
+# MdBox Documentation
 
-Quiver is a high-performance, cross-platform Python package and command-line tool for packing and unpacking text files into a strictly formatted, machine-readable XML format.
+MdBox is a high-performance, cross-platform Python package and command-line tool for packing and unpacking text files into a strictly formatted, machine-readable XML format.
 
 ## Installation
 
 ```bash
-pip install quiver
+pip install MdBox
 ```
 
 ## Usage
@@ -13,13 +13,13 @@ pip install quiver
 ### Pack files into XML
 
 ```bash
-quiver -cf archive.xml ./src ./README.md ./docs
+MdBox -cf archive.xml ./src ./README.md ./docs
 ```
 
 ### Unpack XML into files
 
 ```bash
-quiver -xf archive.xml
+MdBox -xf archive.xml
 ```
 
 ## Development
