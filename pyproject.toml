@@ -1,6 +1,6 @@
 [project]
 name = "mdbox"
-version = "0.1.0"
+version = "0.1.1"
 description = "Pack and unpack text files into machine-readable XML"
 readme = "README.md"
 requires-python = ">=3.12.3"
@@ -8,23 +8,43 @@ license = {file = "LICENSE"}
 authors = [
     {name = "Christian Gröling", email = "contact@christiangroeling.de"}
 ]
-keywords = ["xml", "text", "pack", "unpack", "cli", "format", "serialization", "cross-platform"]
+keywords = [
+    "xml", 
+    "markdown", 
+    "archive", 
+    "bundle", 
+    "cli", 
+    "llm", 
+    "ai", 
+    "prompt", 
+    "context-window", 
+    "serialization", 
+    "pack", 
+    "unpack"
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
-    "Topic :: Text Processing :: Markup :: XML",
     "Topic :: System :: Archiving",
+    "Topic :: System :: Archiving :: Packaging",
+    "Topic :: Text Processing :: General",
+    "Topic :: Text Processing :: Markup :: Markdown",
+    "Topic :: Text Processing :: Markup :: XML",
     "Topic :: Utilities",
     "Typing :: Typed",
 ]
+
 dependencies = [
     "click>=8.1.0",
     "rich>=13.0.0",
@@ -36,7 +56,7 @@ dependencies = [
 Homepage = "https://github.com/chgroeling/mdbox"
 Repository = "https://github.com/chgroeling/mdbox"
 Issues = "https://github.com/chgroeling/mdbox/issues"
-Documentation = "https://github.com/chgroeling/mdbox/tree/main/docs"
+#Documentation = "https://github.com/chgroeling/mdbox/tree/main/docs"
 
 [project.scripts]
 mdbox = "mdbox.cli:main"
