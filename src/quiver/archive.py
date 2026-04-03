@@ -19,7 +19,6 @@ import asyncio
 import re
 import time
 import warnings
-from collections.abc import Awaitable, Callable
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -283,14 +282,6 @@ type _ParsedEntry = tuple[str, int, int]
 type _ParseResult = tuple[list[_ParsedEntry], str, str, memoryview]
 
 
-def _read_content_from_buffer(buffer: memoryview, offset: int, length: int) -> str:
-    """Decode and unescape a slice from *buffer* at *offset* of *length*."""
-
-    raw_slice = buffer[offset : offset + length]
-    text = str(raw_slice, "utf-8")
-    return _unescape_cdata(text)
-
-
 # Matches a single <file path="...">…</file> block in bytes form.
 _FILE_ENTRY_RE_BYTES = re.compile(
     rb'<file\s+path="([^"]*)">'  # group 1 — stored path attribute
@@ -355,9 +346,6 @@ def _parse_archive(archive_path: str) -> _ParseResult:
 # ===========================================================================
 
 
-type _ContentReader = Callable[["QuiverInfo"], Awaitable[str]]
-
-
 class _ExtractPipeline:
     """Async pipeline that writes extracted files to disk.
 
@@ -367,7 +355,7 @@ class _ExtractPipeline:
     Args:
         entries: List of archive members to extract.
         destination: Resolved absolute path of the extraction root directory.
-        content_reader: Awaitable callable that returns text content for a member.
+        quiver_file: Archive instance used to read member contents.
     """
 
     def __init__(
@@ -375,11 +363,11 @@ class _ExtractPipeline:
         entries: list[QuiverInfo],
         destination: Path,
         *,
-        content_reader: _ContentReader,
+        quiver_file: QuiverFile,
     ) -> None:
         self._entries = entries
         self._destination = destination
-        self._content_reader = content_reader
+        self._quiver_file = quiver_file
 
     async def run_async(self) -> None:
         """Execute the pipeline inside an existing event loop."""
@@ -420,7 +408,7 @@ class _ExtractPipeline:
     async def _writer_worker(self, entries: list[QuiverInfo]) -> None:
         """Write each entry in *entries* to disk."""
         for info in entries:
-            content = await self._content_reader(info)
+            content = self._quiver_file.read(info)
             target = _validate_extraction_path(info.name, self._destination)
             await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
             async with async_open(target, "w", encoding="utf-8") as afp:
@@ -765,7 +753,9 @@ class QuiverFile:
         if target._offset is None or self._raw_bytes is None:
             raise KeyError(target.name)
 
-        return _read_content_from_buffer(self._raw_bytes, target._offset, target.length)
+        raw_slice = self._raw_bytes[target._offset : target._offset + target.length]
+        text = str(raw_slice, "utf-8")
+        return _unescape_cdata(text)
 
     def __iter__(self) -> Iterator[QuiverInfo]:
         """Iterate over archive members, yielding [QuiverInfo][] objects.
@@ -828,26 +818,11 @@ class QuiverFile:
         pipeline = _ExtractPipeline(
             entries=entries,
             destination=destination,
-            content_reader=self._read_member_async,
+            quiver_file=self,
         )
 
         asyncio.run(pipeline.run_async())
         self._write_surrounding_text(destination)
-
-    async def _read_member_async(self, info: QuiverInfo) -> str:
-        """Return archive content for *info* using asynchronous disk I/O."""
-
-        cached = self._content_cache.get(info.name)
-        if cached is not None:
-            return cached
-
-        if self._mode == "w":
-            return await asyncio.to_thread(self._get_entry_content, info.name)
-
-        if info._offset is None or self._raw_bytes is None:
-            raise KeyError(info.name)
-
-        return _read_content_from_buffer(self._raw_bytes, info._offset, info.length)
 
     def _write_surrounding_text(self, destination: Path) -> None:
         """Write `PREAMBLE` and `EPILOGUE` files to *destination* if present.
