@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from importlib.metadata import version
 from typing import IO
 
 from mdbox.archive import BinaryFileError, MdboxFile, MdboxInfo, PathTraversalError
 
-__version__ = "0.1.0"
+__version__ = version("mdbox")
 __all__ = [
     "__version__",
     "open",
