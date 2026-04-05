@@ -3,7 +3,7 @@ name = "mdbox"
 version = "0.1.1"
 description = "Pack and unpack text files into machine-readable XML"
 readme = "README.md"
-requires-python = ">=3.12.3"
+requires-python = ">=3.12"
 license = {file = "LICENSE"}
 authors = [
     {name = "Christian Gröling", email = "contact@christiangroeling.de"}
@@ -34,7 +34,6 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Archiving",
     "Topic :: System :: Archiving :: Packaging",
