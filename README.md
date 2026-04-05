@@ -1,10 +1,12 @@
 # mdbox
 
-> Pack and unpack text files into structured, plain-text archives with embedded XML. Perfectly formatted for LLM context windows.
-
-![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)
-![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)
+[![PyPI](https://img.shields.io/pypi/v/mdbox.svg)](https://pypi.org/project/mdbox/)
+
+Pack and unpack text files into structured, plain-text archives with embedded XML. Perfectly formatted for LLM context windows.
+
 
 ## Overview
 
